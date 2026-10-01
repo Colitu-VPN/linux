@@ -14,7 +14,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- Colitu's ad-blocking DNS nodes are not in the public source: release builds pass -p:ColituAdBlockDoh=... -->
+		<!-- Colitu's ad-blocking DNS nodes are not in the public source: release builds set the ColituAdBlockDoh environment variable (a comma-separated list, so not -p:). -->
 		<AssemblyMetadata Include="ColituAdBlockDoh" Value="$(ColituAdBlockDoh)" />
 	</ItemGroup>
 

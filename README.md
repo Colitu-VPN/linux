@@ -80,8 +80,8 @@ dotnet test --project ColituVPN.Tests
 ```
 
 The ad-blocking DNS servers are Colitu's own nodes and are not in the source;
-release builds pass them with `-p:ColituAdBlockDoh=https://...` (the package
-scripts read `COLITU_ADBLOCK_DOH`). Without them the ad-block switch is hidden.
+release builds pass them in the `ColituAdBlockDoh` environment variable (the
+package scripts read `COLITU_ADBLOCK_DOH`). Without them the ad-block switch is hidden.
 
 ## Release
 

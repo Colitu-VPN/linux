@@ -49,11 +49,12 @@ jobs:
       - name: Publish
         env:
           # Colitu's ad-blocking DNS nodes are build-time secrets, never in the source.
-          COLITU_ADBLOCK_DOH: ${{ secrets.COLITU_ADBLOCK_DOH }}
+          # MSBuild reads the comma-separated list from the environment (-p: would split it).
+          ColituAdBlockDoh: ${{ secrets.COLITU_ADBLOCK_DOH }}
         run: |
+          case "$ColituAdBlockDoh" in https://*) ;; *) echo "::error::COLITU_ADBLOCK_DOH secret is missing"; exit 1 ;; esac
           dotnet publish v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj -c Release -r linux-${{ matrix.arch }} \
-            -p:SelfContained=true -p:PublishSingleFile=false -p:Version="$VERSION" \
-            -p:ColituAdBlockDoh="$COLITU_ADBLOCK_DOH" -o publish
+            -p:SelfContained=true -p:PublishSingleFile=false -p:Version="$VERSION" -o publish
 
       - name: Package
         run: bash scripts/package-linux.sh "$VERSION" ${{ matrix.arch }} publish dist

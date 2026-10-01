@@ -491,7 +491,8 @@ publish_binary() {
   dotnet clean "$PROJECT" -c Release
   rm -rf "$(dirname "$PROJECT")/bin/Release/net10.0" || true
   dotnet restore "$PROJECT"
-  dotnet publish "$PROJECT" -c Release -r "$rid" -p:PublishSingleFile=false -p:SelfContained=true -p:Version="$VERSION" -p:ColituAdBlockDoh="${COLITU_ADBLOCK_DOH:-}"
+  # The DoH list contains commas, which -p: would split; MSBuild reads it from the environment instead.
+  ColituAdBlockDoh="${COLITU_ADBLOCK_DOH:-}" dotnet publish "$PROJECT" -c Release -r "$rid" -p:PublishSingleFile=false -p:SelfContained=true -p:Version="$VERSION"
 }
 
 write_launcher_file() {
