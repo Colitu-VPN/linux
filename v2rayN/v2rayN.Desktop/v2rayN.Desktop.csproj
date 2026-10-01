@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+		<AssemblyName>ColituVPN</AssemblyName>
+		<!-- Colitu for Linux has its own version line; Directory.Build.props carries the v2rayN base version. -->
+		<Version>1.0.0</Version>
+		<Product>Colitu VPN</Product>
+		<Company>Colitu</Company>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<CETCompat>false</CETCompat>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Colitu's ad-blocking DNS nodes are not in the public source: release builds pass -p:ColituAdBlockDoh=... -->
+		<AssemblyMetadata Include="ColituAdBlockDoh" Value="$(ColituAdBlockDoh)" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Avalonia.AvaloniaEdit" />
+		<PackageReference Include="Avalonia.Controls.DataGrid">
+			<TreatAsUsed>true</TreatAsUsed>
+		</PackageReference>
+		<PackageReference Include="Avalonia.Desktop" />
+		<PackageReference Condition="'$(Configuration)' == 'Debug'" Include="AvaloniaUI.DiagnosticsSupport" />
+		<PackageReference Include="DialogHost.Avalonia" />
+		<PackageReference Include="ReactiveUI.Avalonia" />
+		<PackageReference Include="ReactiveUI.SourceGenerators">
+		  <PrivateAssets>all</PrivateAssets>
+		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+		<PackageReference Include="Semi.Avalonia" />
+		<PackageReference Include="Semi.Avalonia.AvaloniaEdit" />
+		<PackageReference Include="Semi.Avalonia.DataGrid">
+			<TreatAsUsed>true</TreatAsUsed>
+		</PackageReference>
+		<PackageReference Include="ReactiveUI">
+			<TreatAsUsed>true</TreatAsUsed>
+		</PackageReference>
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectCapability Include="Avalonia" />
+		<AvaloniaResource Include="Assets\**" />
+		<ProjectReference Include="..\ServiceLib\ServiceLib.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="Assets\v2rayN.ico">
+			<CopyToOutputDirectory>Never</CopyToOutputDirectory>
+		</EmbeddedResource>
+		<Compile Update="Views\FullConfigTemplateWindow.axaml.cs">
+		  <DependentUpon>FullConfigTemplateWindow.axaml</DependentUpon>
+		</Compile>
+		<None Update="v2rayN.png">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>

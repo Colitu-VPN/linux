@@ -1,0 +1,2555 @@
+<Window
+    x:Class="v2rayN.Desktop.Views.ColituMainWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:s="using:v2rayN.Desktop.Services"
+    xmlns:v="using:v2rayN.Desktop.Views"
+    Title="Colitu VPN"
+    Width="1140"
+    Height="760"
+    MinWidth="1000"
+    MinHeight="680"
+    Background="Transparent"
+    CanResize="True"
+    FontFamily="{StaticResource ColituFont}"
+    Foreground="#F4F3FA"
+    Icon="/Assets/Colitu/colitu.ico"
+    RequestedThemeVariant="Dark"
+    WindowDecorations="None"
+    TransparencyLevelHint="Transparent"
+    WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <!-- Round flag: the country's square flag clipped to a circle. -->
+        <DataTemplate x:Key="FlagTemplate" x:DataType="v:ColituServerRow">
+            <Panel Width="34" Height="34">
+                <Ellipse Fill="{StaticResource IconWellBrush}" />
+                <Border
+                    Width="34"
+                    Height="34"
+                    ClipToBounds="True"
+                    CornerRadius="17"
+                    IsVisible="{Binding HasFlag}">
+                    <Image Source="{Binding FlagBitmap}" Stretch="UniformToFill" />
+                </Border>
+                <Path
+                    Width="15"
+                    Height="15"
+                    Data="{StaticResource IconBolt}"
+                    Fill="{StaticResource LilacBrush}"
+                    IsVisible="{Binding IsAuto}"
+                    Stretch="Uniform" />
+                <Ellipse Stroke="#26FFFFFF" StrokeThickness="1" />
+            </Panel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ServerRowTemplate" x:DataType="v:ColituServerRow">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <ContentControl Content="{Binding}" ContentTemplate="{StaticResource FlagTemplate}" />
+                <StackPanel
+                    Grid.Column="1"
+                    Margin="14,0,12,0"
+                    VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock
+                            FontSize="15"
+                            FontWeight="SemiBold"
+                            Text="{Binding Title}"
+                            TextTrimming="CharacterEllipsis" />
+                        <!-- The node runs one of Colitu's ad-blocking DNS servers. -->
+                        <Border
+                            Margin="8,1,0,0"
+                            Padding="7,1"
+                            VerticalAlignment="Center"
+                            Background="#268B78FF"
+                            CornerRadius="8"
+                            IsVisible="{Binding AdBlock}">
+                            <TextBlock
+                                FontSize="10.5"
+                                FontWeight="SemiBold"
+                                Foreground="{StaticResource LilacBrush}"
+                                Text="{Binding AdBlockText}" />
+                        </Border>
+                    </StackPanel>
+                    <TextBlock
+                        Margin="0,2,0,0"
+                        FontSize="12.5"
+                        Foreground="{StaticResource MutedBrush}"
+                        Text="{Binding Subtitle}"
+                        TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <!-- Ping from this computer (measured outside the tunnel) with signal bars; the load is in the tooltip. -->
+                <StackPanel
+                    Grid.Column="2"
+                    Margin="0,0,16,0"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding PingVisible}"
+                    Orientation="Horizontal"
+                    ToolTip.Tip="{Binding PingToolTip}">
+                    <TextBlock
+                        MinWidth="52"
+                        Margin="0,0,10,0"
+                        VerticalAlignment="Center"
+                        FontSize="13"
+                        FontWeight="SemiBold"
+                        Foreground="{Binding PingTextBrush}"
+                        Text="{Binding PingText}"
+                        TextAlignment="Right" />
+                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                        <Border
+                            Width="4"
+                            Height="8"
+                            Margin="0,0,3,0"
+                            VerticalAlignment="Bottom"
+                            Background="{Binding PingBar1}"
+                            CornerRadius="2" />
+                        <Border
+                            Width="4"
+                            Height="12"
+                            Margin="0,0,3,0"
+                            VerticalAlignment="Bottom"
+                            Background="{Binding PingBar2}"
+                            CornerRadius="2" />
+                        <Border
+                            Width="4"
+                            Height="16"
+                            VerticalAlignment="Bottom"
+                            Background="{Binding PingBar3}"
+                            CornerRadius="2" />
+                    </StackPanel>
+                </StackPanel>
+                <Border
+                    Grid.Column="3"
+                    MinWidth="92"
+                    Background="{Binding StateBackground}"
+                    Classes="badge"
+                    IsVisible="{Binding StateVisible}">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        Classes="badgeText"
+                        Foreground="{Binding StateForeground}"
+                        Text="{Binding StateText}" />
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="SupportRowTemplate" x:DataType="v:ColituSupportRow">
+            <Grid
+                Margin="2"
+                ColumnDefinitions="*,Auto"
+                RowDefinitions="Auto,Auto,Auto">
+                <TextBlock
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Text="{Binding Title}"
+                    TextTrimming="CharacterEllipsis" />
+                <TextBlock
+                    Grid.Column="1"
+                    Margin="10,1,0,0"
+                    FontSize="11.5"
+                    Foreground="{StaticResource DimBrush}"
+                    Text="{Binding TimeText}" />
+                <TextBlock
+                    Grid.Row="1"
+                    Margin="0,4,0,0"
+                    FontSize="12.5"
+                    Foreground="{StaticResource MutedBrush}"
+                    Text="{Binding Preview}"
+                    TextTrimming="CharacterEllipsis" />
+                <Border
+                    Grid.Row="1"
+                    Grid.Column="1"
+                    MinWidth="20"
+                    Height="20"
+                    Margin="10,2,0,0"
+                    Padding="6,0"
+                    HorizontalAlignment="Right"
+                    Background="{StaticResource DangerBrush}"
+                    CornerRadius="10"
+                    IsVisible="{Binding HasUnread}">
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="11"
+                        FontWeight="Bold"
+                        Foreground="White"
+                        Text="{Binding Unread}" />
+                </Border>
+                <Border
+                    Grid.Row="2"
+                    Margin="0,8,0,0"
+                    Padding="8,2"
+                    HorizontalAlignment="Left"
+                    Background="{Binding StatusBackground}"
+                    CornerRadius="8">
+                    <TextBlock
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        Foreground="{Binding StatusForeground}"
+                        Text="{Binding StatusText}" />
+                </Border>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Border
+        x:Name="WindowFrame"
+        Background="{StaticResource BgBrush}"
+        BorderBrush="{StaticResource WindowEdgeBrush}"
+        BorderThickness="1"
+        CornerRadius="18">
+        <Panel x:Name="Root" ClipToBounds="True">
+            <!-- Backdrop (ColituBackdrop on the phones): near-black, a soft lavender
+                 glow behind the top and a hex dot grid fading out downwards. -->
+            <Panel IsHitTestVisible="False">
+                <Rectangle Fill="{StaticResource TopGlowBrush}" />
+                <Rectangle Fill="{StaticResource HexDotsBrush}" OpacityMask="{StaticResource HexDotsFade}" />
+            </Panel>
+
+            <!-- Title area: drag to move, double-click to maximize. -->
+            <Border
+                x:Name="DragArea"
+                Height="64"
+                VerticalAlignment="Top"
+                Background="Transparent" />
+
+            <!-- ── Loading (session restore) ───────────────────────────────── -->
+            <Panel x:Name="LoadingView">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image
+                        Width="86"
+                        Height="72"
+                        Source="/Assets/Colitu/mark.png"
+                        Stretch="Uniform" />
+                    <Path
+                        Height="22"
+                        Margin="0,26,0,0"
+                        HorizontalAlignment="Center"
+                        Data="{StaticResource ColituWordmarkGeometry}"
+                        Fill="White"
+                        Stretch="Uniform" />
+                    <Ellipse Margin="0,34,0,0" Classes="spinner" />
+                    <TextBlock
+                        Margin="0,14,0,0"
+                        HorizontalAlignment="Center"
+                        Classes="small"
+                        Text="{s:T loading.session}" />
+                </StackPanel>
+            </Panel>
+
+            <!-- ── Sign in / sign up ───────────────────────────────────────── -->
+            <Grid
+                x:Name="AuthView"
+                ColumnDefinitions="1.05*,*"
+                IsVisible="False">
+                <Border
+                    Margin="14,14,0,14"
+                    Padding="0"
+                    Classes="panel"
+                    ClipToBounds="True"
+                    CornerRadius="28">
+                    <Panel>
+                        <StackPanel
+                            Margin="36,32"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            Orientation="Horizontal">
+                            <Image Height="26" Source="/Assets/Colitu/mark.png" />
+                            <Viewbox
+                                Height="14"
+                                Margin="12,0,0,0"
+                                VerticalAlignment="Center">
+                                <Panel>
+                                    <Path Data="{StaticResource ColituWordmarkGeometry}" Fill="White" />
+                                    <Path Data="{StaticResource ColituVpnGeometry}" Fill="{StaticResource AccentBrush}" />
+                                </Panel>
+                            </Viewbox>
+                        </StackPanel>
+                        <!-- Turning globe of dots, the hero of the phone sign-in. -->
+                        <v:ColituParticles
+                            Width="330"
+                            Height="330"
+                            Margin="0,0,0,150"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Color="#9F8CFF"
+                            Color2="#C4B5FD"
+                            Energy="0.5"
+                            Mode="Sphere" />
+                        <StackPanel Margin="36,0,36,40" VerticalAlignment="Bottom">
+                            <Border
+                                Padding="14,6"
+                                HorizontalAlignment="Left"
+                                Background="#149F8CFF"
+                                BorderBrush="#669F8CFF"
+                                BorderThickness="1"
+                                CornerRadius="999">
+                                <TextBlock
+                                    Classes="kicker"
+                                    FontWeight="Bold"
+                                    Foreground="{StaticResource LilacBrush}"
+                                    Text="{s:T auth.kicker}" />
+                            </Border>
+                            <TextBlock
+                                MaxWidth="440"
+                                Margin="0,18,0,0"
+                                HorizontalAlignment="Left"
+                                Classes="display"
+                                Text="{s:T auth.heroTitle}" />
+                            <TextBlock
+                                MaxWidth="420"
+                                Margin="0,12,0,0"
+                                HorizontalAlignment="Left"
+                                Classes="muted"
+                                FontSize="15"
+                                Text="{s:T auth.heroSub}" />
+                        </StackPanel>
+                    </Panel>
+                </Border>
+
+                <Panel Grid.Column="1">
+                    <Border
+                        Margin="0,16,120,0"
+                        Padding="3"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Classes="segmentHost"
+                        ZIndex="2">
+                        <StackPanel x:Name="AuthLanguageList" Orientation="Horizontal" />
+                    </Border>
+
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <StackPanel
+                            x:Name="AuthCard"
+                            Width="420"
+                            Margin="0,70,0,30"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                            <TextBlock
+                                x:Name="AuthTitle"
+                                HorizontalAlignment="Center"
+                                Classes="h1"
+                                TextAlignment="Center" />
+                            <TextBlock
+                                x:Name="AuthSubtitle"
+                                Margin="0,10,0,0"
+                                HorizontalAlignment="Center"
+                                Classes="muted"
+                                TextAlignment="Center" />
+
+                            <!-- The form sits in a glass card, like the phone sign-in. -->
+                            <Border
+                                Margin="0,24,0,0"
+                                Padding="24,22,24,20"
+                                Classes="panel">
+                                <StackPanel>
+                                    <Border Classes="segmentHost">
+                                        <UniformGrid Rows="1">
+                                            <RadioButton
+                                                x:Name="AuthLoginTab"
+                                                Content="{s:T auth.login}"
+                                                GroupName="AuthTab"
+                                                IsChecked="True"
+                                                Theme="{StaticResource SegmentOption}" />
+                                            <RadioButton
+                                                x:Name="AuthRegisterTab"
+                                                Content="{s:T auth.register}"
+                                                GroupName="AuthTab"
+                                                Theme="{StaticResource SegmentOption}" />
+                                        </UniformGrid>
+                                    </Border>
+
+                                    <TextBlock
+                                        Margin="2,22,0,8"
+                                        Classes="fieldLabel"
+                                        Text="{s:T auth.email}" />
+                                    <Border Classes="field">
+                                        <TextBox
+                                            x:Name="EmailBox"
+                                            Classes="bare"
+                                            PlaceholderText="{s:T auth.emailHint}" />
+                                    </Border>
+
+                                    <TextBlock
+                                        Margin="2,16,0,8"
+                                        Classes="fieldLabel"
+                                        Text="{s:T auth.password}" />
+                                    <Border Classes="field">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBox
+                                                x:Name="PasswordBox"
+                                                Classes="bare"
+                                                PasswordChar="•" />
+                                            <Button
+                                                x:Name="ShowPasswordButton"
+                                                Grid.Column="1"
+                                                Margin="0,0,8,0"
+                                                Theme="{StaticResource IconButton}"
+                                                ToolTip.Tip="{s:T auth.show}">
+                                                <Path Classes="stroke" Data="{StaticResource IconEye}" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel x:Name="RegisterFields" IsVisible="False">
+                                        <TextBlock
+                                            Margin="2,16,0,8"
+                                            Classes="fieldLabel"
+                                            Text="{s:T auth.passwordRepeat}" />
+                                        <Border Classes="field">
+                                            <TextBox
+                                                x:Name="PasswordRepeatBox"
+                                                Classes="bare"
+                                                PasswordChar="•" />
+                                        </Border>
+                                        <StackPanel Margin="2,18,0,0" Orientation="Horizontal">
+                                            <CheckBox x:Name="TermsCheck" Theme="{StaticResource FieldCheck}" />
+                                            <Button
+                                                x:Name="TermsLink"
+                                                VerticalAlignment="Center"
+                                                Content="{s:T auth.terms}"
+                                                Theme="{StaticResource LinkButton}" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <Border
+                                        x:Name="AuthErrorBox"
+                                        Margin="0,18,0,0"
+                                        Classes="errorBox"
+                                        IsVisible="False">
+                                        <TextBlock x:Name="AuthErrorText" Classes="errorText" />
+                                    </Border>
+
+                                    <Button
+                                        x:Name="AuthSubmitButton"
+                                        Height="52"
+                                        Margin="0,22,0,0"
+                                        HorizontalAlignment="Stretch"
+                                        Theme="{StaticResource PrimaryButton}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse
+                                                x:Name="AuthSpinner"
+                                                Margin="0,0,10,0"
+                                                Classes="spinner onAccent"
+                                                IsVisible="False" />
+                                            <TextBlock x:Name="AuthSubmitText" FontSize="15.5" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Grid Margin="0,16,0,0" ColumnDefinitions="Auto,*">
+                                        <Button
+                                            x:Name="ForgotButton"
+                                            HorizontalAlignment="Left"
+                                            Content="{s:T auth.forgot}"
+                                            Theme="{StaticResource LinkButton}" />
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            HorizontalAlignment="Right"
+                                            Orientation="Horizontal">
+                                            <Path
+                                                Width="13"
+                                                Height="13"
+                                                Margin="0,0,6,0"
+                                                Data="{StaticResource IconLock}"
+                                                Stretch="Uniform"
+                                                Stroke="{StaticResource DimBrush}"
+                                                StrokeThickness="1.6" />
+                                            <TextBlock
+                                                MaxWidth="220"
+                                                FontSize="12"
+                                                Foreground="{StaticResource MutedBrush}"
+                                                Text="{s:T auth.remember}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Panel>
+            </Grid>
+
+            <!-- ── Password reset ──────────────────────────────────────────── -->
+            <Panel x:Name="ResetView" IsVisible="False">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <Border
+                        Width="468"
+                        Margin="0,36"
+                        Padding="38,36"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Classes="panel">
+                        <StackPanel x:Name="ResetCard">
+                            <Panel
+                                Width="64"
+                                Height="64"
+                                HorizontalAlignment="Left">
+                                <Ellipse
+                                    Fill="{StaticResource IconWellBrush}"
+                                    Stroke="{StaticResource LineStrongBrush}"
+                                    StrokeThickness="1" />
+                                <Path
+                                    Width="26"
+                                    Height="26"
+                                    Data="{StaticResource IconLock}"
+                                    Stretch="Uniform"
+                                    Stroke="{StaticResource LilacBrush}"
+                                    StrokeJoin="Round"
+                                    StrokeThickness="1.8" />
+                            </Panel>
+                            <TextBlock
+                                Margin="0,24,0,0"
+                                Classes="h1"
+                                Text="{s:T reset.title}" />
+                            <TextBlock
+                                x:Name="ResetSubtitle"
+                                Margin="0,10,0,0"
+                                Classes="muted" />
+                            <TextBlock
+                                Margin="2,24,0,8"
+                                Classes="fieldLabel"
+                                Text="{s:T auth.email}" />
+                            <Border Classes="field">
+                                <TextBox
+                                    x:Name="ResetEmailBox"
+                                    Classes="bare"
+                                    PlaceholderText="{s:T auth.emailHint}" />
+                            </Border>
+                            <StackPanel x:Name="ResetCodeFields" IsVisible="False">
+                                <TextBlock
+                                    Margin="2,16,0,8"
+                                    Classes="fieldLabel"
+                                    Text="{s:T verify.code}" />
+                                <Border Classes="field">
+                                    <TextBox
+                                        x:Name="ResetCodeBox"
+                                        Height="58"
+                                        Classes="bare"
+                                        FontSize="24"
+                                        FontWeight="SemiBold"
+                                        MaxLength="12"
+                                        TextAlignment="Center" />
+                                </Border>
+                                <TextBlock
+                                    Margin="2,16,0,8"
+                                    Classes="fieldLabel"
+                                    Text="{s:T reset.newPassword}" />
+                                <Border Classes="field">
+                                    <TextBox
+                                        x:Name="ResetPasswordBox"
+                                        Classes="bare"
+                                        PasswordChar="•" />
+                                </Border>
+                                <TextBlock
+                                    Margin="2,6,0,0"
+                                    FontSize="12"
+                                    Foreground="{StaticResource MutedBrush}"
+                                    Text="{s:T auth.passwordHint}" />
+                                <TextBlock
+                                    Margin="2,14,0,8"
+                                    Classes="fieldLabel"
+                                    Text="{s:T auth.passwordRepeat}" />
+                                <Border Classes="field">
+                                    <TextBox
+                                        x:Name="ResetRepeatBox"
+                                        Classes="bare"
+                                        PasswordChar="•" />
+                                </Border>
+                            </StackPanel>
+                            <Border
+                                x:Name="ResetInfoBox"
+                                Margin="0,16,0,0"
+                                Classes="infoBox"
+                                IsVisible="False">
+                                <TextBlock x:Name="ResetInfoText" Classes="infoText" />
+                            </Border>
+                            <Border
+                                x:Name="ResetErrorBox"
+                                Margin="0,16,0,0"
+                                Classes="errorBox"
+                                IsVisible="False">
+                                <TextBlock x:Name="ResetErrorText" Classes="errorText" />
+                            </Border>
+                            <Button
+                                x:Name="ResetSubmitButton"
+                                Height="52"
+                                Margin="0,20,0,0"
+                                HorizontalAlignment="Stretch"
+                                Theme="{StaticResource PrimaryButton}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse
+                                        x:Name="ResetSpinner"
+                                        Margin="0,0,10,0"
+                                        Classes="spinner onAccent"
+                                        IsVisible="False" />
+                                    <TextBlock x:Name="ResetSubmitText" FontSize="15.5" />
+                                </StackPanel>
+                            </Button>
+                            <Grid Margin="0,18,0,0" ColumnDefinitions="Auto,*">
+                                <Button
+                                    x:Name="ResetResendButton"
+                                    HorizontalAlignment="Left"
+                                    IsVisible="False"
+                                    Theme="{StaticResource LinkButton}">
+                                    <TextBlock x:Name="ResetResendText" />
+                                </Button>
+                                <Button
+                                    x:Name="ResetBackButton"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    Content="{s:T reset.back}"
+                                    Theme="{StaticResource LinkButton}" />
+                            </Grid>
+                            <Button
+                                x:Name="ResetChangeEmailButton"
+                                Margin="0,8,0,0"
+                                HorizontalAlignment="Left"
+                                Content="{s:T reset.changeEmail}"
+                                IsVisible="False"
+                                Theme="{StaticResource LinkButton}" />
+                            <TextBlock
+                                x:Name="ResetNote"
+                                Margin="0,16,0,0"
+                                Classes="small"
+                                IsVisible="False"
+                                Text="{s:T reset.note}" />
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
+            </Panel>
+
+            <!-- ── E-mail verification ─────────────────────────────────────── -->
+            <Panel x:Name="VerifyView" IsVisible="False">
+                <Border
+                    Width="468"
+                    Padding="38,36"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel x:Name="VerifyCard">
+                        <Panel
+                            Width="64"
+                            Height="64"
+                            HorizontalAlignment="Left">
+                            <Ellipse
+                                Fill="{StaticResource IconWellBrush}"
+                                Stroke="{StaticResource LineStrongBrush}"
+                                StrokeThickness="1" />
+                            <Path
+                                Width="26"
+                                Height="26"
+                                Data="{StaticResource IconMail}"
+                                Stretch="Uniform"
+                                Stroke="{StaticResource LilacBrush}"
+                                StrokeJoin="Round"
+                                StrokeThickness="1.8" />
+                        </Panel>
+                        <TextBlock
+                            Margin="0,24,0,0"
+                            Classes="kicker"
+                            Text="{s:T verify.kicker}" />
+                        <TextBlock
+                            Margin="0,10,0,0"
+                            Classes="h1"
+                            Text="{s:T verify.title}" />
+                        <TextBlock
+                            x:Name="VerifySubtitle"
+                            Margin="0,10,0,0"
+                            Classes="muted" />
+                        <TextBlock
+                            Margin="2,26,0,8"
+                            Classes="fieldLabel"
+                            Text="{s:T verify.code}" />
+                        <Border Classes="field">
+                            <TextBox
+                                x:Name="VerifyCodeBox"
+                                Height="66"
+                                Classes="bare"
+                                FontSize="30"
+                                FontWeight="SemiBold"
+                                MaxLength="12"
+                                TextAlignment="Center" />
+                        </Border>
+                        <Border
+                            x:Name="VerifyErrorBox"
+                            Margin="0,16,0,0"
+                            Classes="errorBox"
+                            IsVisible="False">
+                            <TextBlock x:Name="VerifyErrorText" Classes="errorText" />
+                        </Border>
+                        <Button
+                            x:Name="VerifySubmitButton"
+                            Height="52"
+                            Margin="0,20,0,0"
+                            HorizontalAlignment="Stretch"
+                            Theme="{StaticResource PrimaryButton}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse
+                                    x:Name="VerifySpinner"
+                                    Margin="0,0,10,0"
+                                    Classes="spinner onAccent"
+                                    IsVisible="False" />
+                                <TextBlock FontSize="15.5" Text="{s:T verify.submit}" />
+                            </StackPanel>
+                        </Button>
+                        <Grid Margin="0,18,0,0" ColumnDefinitions="Auto,*">
+                            <Button
+                                x:Name="VerifyResendButton"
+                                HorizontalAlignment="Left"
+                                Theme="{StaticResource LinkButton}">
+                                <TextBlock x:Name="VerifyResendText" />
+                            </Button>
+                            <Button
+                                x:Name="VerifyOtherButton"
+                                Grid.Column="1"
+                                HorizontalAlignment="Right"
+                                Content="{s:T verify.other}"
+                                Theme="{StaticResource LinkButton}" />
+                        </Grid>
+                        <TextBlock
+                            Margin="0,20,0,0"
+                            Classes="small"
+                            Text="{s:T verify.hint}" />
+                        <TextBlock
+                            Margin="0,8,0,0"
+                            Classes="small"
+                            Text="{s:T verify.web}" />
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- ── Signed-in app ───────────────────────────────────────────── -->
+            <Grid
+                x:Name="AppView"
+                IsVisible="False"
+                RowDefinitions="64,*">
+
+                <Grid Margin="24,0,160,0" ColumnDefinitions="220,*,220">
+                    <StackPanel
+                        VerticalAlignment="Center"
+                        IsHitTestVisible="False"
+                        Orientation="Horizontal">
+                        <Image Height="28" Source="/Assets/Colitu/mark.png" />
+                        <Path
+                            Height="14"
+                            Margin="14,0,0,0"
+                            VerticalAlignment="Center"
+                            Data="{StaticResource ColituWordmarkGeometry}"
+                            Fill="White"
+                            Stretch="Uniform" />
+                    </StackPanel>
+
+                    <!-- Floating pill with the tabs; the active one is lavender (ColituNavBar). -->
+                    <Border
+                        Grid.Column="1"
+                        Padding="4"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="#F2141419"
+                        BorderBrush="{StaticResource LineStrongBrush}"
+                        BorderThickness="1"
+                        CornerRadius="999">
+                        <Panel>
+                            <Border
+                                x:Name="NavThumb"
+                                Width="0"
+                                HorizontalAlignment="Left"
+                                Background="{StaticResource ActionBrush}"
+                                BoxShadow="0 8 24 0 #669F8CFF"
+                                CornerRadius="999"
+                                RenderTransform="translateX(0px)">
+                                <Border.Transitions>
+                                    <Transitions>
+                                        <DoubleTransition
+                                            Easing="QuinticEaseOut"
+                                            Property="Width"
+                                            Duration="0:0:0.52" />
+                                        <TransformOperationsTransition
+                                            Easing="QuinticEaseOut"
+                                            Property="RenderTransform"
+                                            Duration="0:0:0.52" />
+                                        <DoubleTransition Property="Opacity" Duration="0:0:0.26" />
+                                    </Transitions>
+                                </Border.Transitions>
+                            </Border>
+                            <StackPanel x:Name="NavList" Orientation="Horizontal">
+                                <RadioButton
+                                    x:Name="NavHome"
+                                    Content="{s:T nav.home}"
+                                    GroupName="Nav"
+                                    IsChecked="True"
+                                    Tag="home"
+                                    Theme="{StaticResource NavTab}" />
+                                <RadioButton
+                                    x:Name="NavLocations"
+                                    Content="{s:T nav.locations}"
+                                    GroupName="Nav"
+                                    Tag="locations"
+                                    Theme="{StaticResource NavTab}" />
+                                <RadioButton
+                                    x:Name="NavPlan"
+                                    Content="{s:T nav.plan}"
+                                    GroupName="Nav"
+                                    Tag="plan"
+                                    Theme="{StaticResource NavTab}" />
+                                <RadioButton
+                                    x:Name="NavAccount"
+                                    Content="{s:T nav.account}"
+                                    GroupName="Nav"
+                                    Tag="account"
+                                    Theme="{StaticResource NavTab}" />
+                                <RadioButton
+                                    x:Name="NavSettings"
+                                    Content="{s:T nav.settings}"
+                                    GroupName="Nav"
+                                    Tag="settings"
+                                    Theme="{StaticResource NavTab}" />
+                            </StackPanel>
+                        </Panel>
+                    </Border>
+
+                    <StackPanel
+                        Grid.Column="2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                        <Button
+                            x:Name="UpdateButton"
+                            Height="32"
+                            Margin="0,0,10,0"
+                            Padding="12,0"
+                            IsVisible="False"
+                            Theme="{StaticResource SecondaryButton}">
+                            <StackPanel Orientation="Horizontal">
+                                <Path
+                                    Width="13"
+                                    Height="13"
+                                    Margin="0,0,7,0"
+                                    Classes="stroke text"
+                                    Data="{StaticResource IconDownload}" />
+                                <TextBlock x:Name="UpdateButtonText" FontSize="12.5" />
+                            </StackPanel>
+                        </Button>
+                        <Border
+                            x:Name="StatusChip"
+                            Height="38"
+                            Padding="12,0,16,0"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource LineBrush}"
+                            BorderThickness="1"
+                            CornerRadius="999">
+                            <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                                <Panel
+                                    Width="12"
+                                    Height="12"
+                                    Margin="0,0,10,0">
+                                    <Ellipse
+                                        x:Name="StatusDotHalo"
+                                        Fill="#5EE0A0"
+                                        Opacity="0"
+                                        RenderTransform="scale(1)" />
+                                    <Ellipse
+                                        x:Name="StatusDot"
+                                        Width="9"
+                                        Height="9"
+                                        Fill="#FF6B7A" />
+                                </Panel>
+                                <TextBlock
+                                    x:Name="StatusChipText"
+                                    VerticalAlignment="Center"
+                                    FontSize="13"
+                                    FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <Panel x:Name="Pages" Grid.Row="1">
+                    <!-- Home -->
+                    <Grid
+                        x:Name="HomePage"
+                        Margin="44,4,40,30"
+                        ColumnDefinitions="*,372">
+                        <Grid
+                            Margin="0,0,28,0"
+                            VerticalAlignment="Center"
+                            RowDefinitions="Auto,Auto">
+
+                            <!-- Connect button with the particle ring behind it (ColituPowerButton on the phones). -->
+                            <Panel
+                                x:Name="Orb"
+                                Width="440"
+                                Height="440"
+                                Margin="0,-40,0,-50"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                                <v:ColituParticles
+                                    x:Name="OrbParticles"
+                                    Color="#9483FF"
+                                    Color2="#C4B5FD"
+                                    Energy="0.22"
+                                    Mode="Ring" />
+                                <Button
+                                    x:Name="ConnectButton"
+                                    Width="204"
+                                    Height="204"
+                                    Cursor="Hand"
+                                    ClipToBounds="False"
+                                    RenderTransform="scale(1)">
+                                    <Button.Template>
+                                        <ControlTemplate>
+                                            <Panel>
+                                                <!-- Soft glow and drop shadow as radial fades: a blur effect is clipped to its bounds. -->
+                                                <Ellipse
+                                                    x:Name="Glow"
+                                                    Margin="-48"
+                                                    IsHitTestVisible="False"
+                                                    Opacity="0.28">
+                                                    <Ellipse.Fill>
+                                                        <RadialGradientBrush>
+                                                            <GradientStop Offset="0.55" Color="#FF9F8CFF" />
+                                                            <GradientStop Offset="1" Color="#009F8CFF" />
+                                                        </RadialGradientBrush>
+                                                    </Ellipse.Fill>
+                                                </Ellipse>
+                                                <Ellipse
+                                                    Margin="-6,30,-6,-40"
+                                                    IsHitTestVisible="False">
+                                                    <Ellipse.Fill>
+                                                        <RadialGradientBrush>
+                                                            <GradientStop Offset="0.45" Color="#80000000" />
+                                                            <GradientStop Offset="1" Color="#00000000" />
+                                                        </RadialGradientBrush>
+                                                    </Ellipse.Fill>
+                                                </Ellipse>
+                                                <Ellipse>
+                                                    <Ellipse.Fill>
+                                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                                            <GradientStop Offset="0" Color="#D0C4FF" />
+                                                            <GradientStop Offset="0.5" Color="#9F8CFF" />
+                                                            <GradientStop Offset="1" Color="#7A69EE" />
+                                                        </LinearGradientBrush>
+                                                    </Ellipse.Fill>
+                                                </Ellipse>
+                                                <!-- Glass rim and gloss. -->
+                                                <Ellipse
+                                                    Margin="3"
+                                                    IsHitTestVisible="False"
+                                                    Stroke="#59FFFFFF"
+                                                    StrokeThickness="1.2">
+                                                    <Ellipse.Fill>
+                                                        <RadialGradientBrush
+                                                            Center="35%,30%"
+                                                            GradientOrigin="35%,30%"
+                                                            RadiusX="50%"
+                                                            RadiusY="50%">
+                                                            <GradientStop Offset="0" Color="#38FFFFFF" />
+                                                            <GradientStop Offset="1" Color="#00FFFFFF" />
+                                                        </RadialGradientBrush>
+                                                    </Ellipse.Fill>
+                                                </Ellipse>
+                                                <Ellipse
+                                                    x:Name="Hover"
+                                                    Fill="#1FFFFFFF"
+                                                    Opacity="0">
+                                                    <Ellipse.Transitions>
+                                                        <Transitions>
+                                                            <DoubleTransition Property="Opacity" Duration="0:0:0.25" />
+                                                        </Transitions>
+                                                    </Ellipse.Transitions>
+                                                </Ellipse>
+                                                <ContentPresenter
+                                                    x:Name="PART_ContentPresenter"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Background="Transparent"
+                                                    Content="{TemplateBinding Content}" />
+                                            </Panel>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Button.Styles>
+                                        <Style Selector="Button:pointerover /template/ Ellipse#Hover">
+                                            <Setter Property="Opacity" Value="1" />
+                                        </Style>
+                                        <Style Selector="Button:pressed /template/ Ellipse#Hover">
+                                            <Setter Property="Fill" Value="#33FFFFFF" />
+                                        </Style>
+                                        <Style Selector="Button:disabled">
+                                            <Setter Property="Opacity" Value="0.55" />
+                                        </Style>
+                                    </Button.Styles>
+                                    <Panel>
+                                        <Path
+                                            x:Name="PowerIcon"
+                                            Width="58"
+                                            Height="60"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Data="{StaticResource IconPower}"
+                                            Stretch="Uniform"
+                                            Stroke="White"
+                                            StrokeLineCap="Round"
+                                            StrokeThickness="3.4" />
+                                        <TextBlock
+                                            x:Name="SessionTimer"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontFeatures="+tnum"
+                                            FontSize="34"
+                                            FontWeight="Bold"
+                                            Foreground="White"
+                                            IsVisible="False"
+                                            Text="00:00:00" />
+                                    </Panel>
+                                </Button>
+                            </Panel>
+
+                            <StackPanel Grid.Row="1" HorizontalAlignment="Center">
+                                <TextBlock
+                                    x:Name="ConnectLabel"
+                                    HorizontalAlignment="Center"
+                                    FontSize="15"
+                                    Foreground="{StaticResource MutedBrush}" />
+                                <TextBlock
+                                    x:Name="HomeTitle"
+                                    Margin="0,16,0,0"
+                                    HorizontalAlignment="Center"
+                                    Classes="h2"
+                                    FontSize="22"
+                                    TextAlignment="Center" />
+                                <TextBlock
+                                    x:Name="HomeSubtitle"
+                                    MaxWidth="500"
+                                    Margin="0,6,0,0"
+                                    HorizontalAlignment="Center"
+                                    Classes="small"
+                                    FontSize="13.5"
+                                    TextAlignment="Center" />
+                                <Border
+                                    x:Name="ProtocolChip"
+                                    Margin="0,14,0,0"
+                                    HorizontalAlignment="Center"
+                                    Classes="chip"
+                                    IsVisible="False">
+                                    <TextBlock x:Name="ProtocolChipText" Classes="chipText" />
+                                </Border>
+                                <Button
+                                    x:Name="UnblockButton"
+                                    Margin="0,12,0,0"
+                                    HorizontalAlignment="Center"
+                                    Content="{s:T home.unblock}"
+                                    IsVisible="False"
+                                    Theme="{StaticResource LinkButton}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ScrollViewer
+                            Grid.Column="1"
+                            HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="HomeCards">
+                                <!-- Location -->
+                                <Border
+                                    x:Name="LocationCard"
+                                    Padding="20"
+                                    Classes="panel"
+                                    Cursor="Hand">
+                                    <StackPanel>
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <Viewbox Width="52" Height="52">
+                                                <ContentControl x:Name="HomeFlag" ContentTemplate="{StaticResource FlagTemplate}" />
+                                            </Viewbox>
+                                            <StackPanel
+                                                Grid.Column="1"
+                                                Margin="14,0,0,0"
+                                                VerticalAlignment="Center">
+                                                <TextBlock
+                                                    x:Name="HomeServerTitle"
+                                                    FontSize="17"
+                                                    FontWeight="SemiBold"
+                                                    TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    x:Name="HomeServerSubtitle"
+                                                    Margin="0,3,0,0"
+                                                    FontSize="13.5"
+                                                    Foreground="{StaticResource MutedBrush}"
+                                                    TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <Border
+                                                x:Name="HomeServerCheck"
+                                                Grid.Column="2"
+                                                Width="22"
+                                                Height="22"
+                                                Margin="10,0,2,0"
+                                                BorderBrush="{StaticResource DimBrush}"
+                                                BorderThickness="1.6"
+                                                CornerRadius="11">
+                                                <Path
+                                                    x:Name="HomeServerCheckMark"
+                                                    Width="10"
+                                                    Height="8"
+                                                    Data="{StaticResource IconCheck}"
+                                                    IsVisible="False"
+                                                    Stretch="Fill"
+                                                    Stroke="{StaticResource OnAccentBrush}"
+                                                    StrokeLineCap="Round"
+                                                    StrokeThickness="2" />
+                                            </Border>
+                                        </Grid>
+                                        <Button
+                                            x:Name="ChangeServerButton"
+                                            Height="48"
+                                            Margin="0,18,0,0"
+                                            HorizontalAlignment="Stretch"
+                                            Theme="{StaticResource PrimaryButton}">
+                                            <TextBlock FontSize="15" Text="{s:T home.changeServer}" />
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Plan -->
+                                <Border
+                                    Margin="0,16,0,0"
+                                    Padding="20,18,20,18"
+                                    Classes="panel">
+                                    <StackPanel>
+                                        <Grid>
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Classes="kicker"
+                                                Text="{s:T home.plan}" />
+                                            <Border
+                                                x:Name="PlanBadge"
+                                                Padding="14,6"
+                                                HorizontalAlignment="Right"
+                                                Classes="badge">
+                                                <TextBlock
+                                                    x:Name="PlanBadgeText"
+                                                    Classes="badgeText"
+                                                    FontSize="12" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock
+                                            x:Name="PlanName"
+                                            Margin="0,10,0,0"
+                                            Classes="h2"
+                                            FontSize="22" />
+                                        <TextBlock
+                                            x:Name="PlanDetail"
+                                            Margin="0,6,0,0"
+                                            Classes="muted"
+                                            FontSize="13.5" />
+                                        <Border Margin="0,16,0,0" Classes="divider" />
+                                        <StackPanel x:Name="TrafficBlock" Margin="0,14,0,0">
+                                            <Grid>
+                                                <TextBlock Classes="rowLabel" Text="{s:T home.traffic}" />
+                                                <TextBlock x:Name="TrafficText" Classes="rowValue" />
+                                            </Grid>
+                                            <Panel
+                                                x:Name="TrafficTrack"
+                                                Height="6"
+                                                Margin="0,10,0,0">
+                                                <Border Background="{StaticResource Glass10Brush}" CornerRadius="3" />
+                                                <Border
+                                                    x:Name="TrafficFill"
+                                                    Width="0"
+                                                    HorizontalAlignment="Left"
+                                                    Background="{StaticResource ActionBrush}"
+                                                    CornerRadius="3">
+                                                    <Border.Transitions>
+                                                        <Transitions>
+                                                            <DoubleTransition
+                                                                Easing="QuinticEaseOut"
+                                                                Property="Width"
+                                                                Duration="0:0:0.9" />
+                                                        </Transitions>
+                                                    </Border.Transitions>
+                                                </Border>
+                                            </Panel>
+                                            <Border Margin="0,14,0,0" Classes="divider" />
+                                        </StackPanel>
+                                        <Grid Margin="0,14,0,0">
+                                            <TextBlock Classes="rowLabel" Text="{s:T home.devices}" />
+                                            <TextBlock x:Name="DevicesText" Classes="rowValue" />
+                                        </Grid>
+                                        <Button
+                                            x:Name="PlanCtaButton"
+                                            Height="44"
+                                            Margin="0,18,0,0"
+                                            HorizontalAlignment="Stretch"
+                                            IsVisible="False"
+                                            Theme="{StaticResource PrimaryButton}">
+                                            <TextBlock x:Name="PlanCtaText" FontSize="14" />
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Quick settings -->
+                                <Border
+                                    Margin="0,16,0,0"
+                                    Padding="20,18,20,12"
+                                    Classes="panel">
+                                    <StackPanel>
+                                        <TextBlock Classes="kicker" Text="{s:T home.quick}" />
+                                        <Border Margin="0,16,0,0" Classes="segmentHost">
+                                            <UniformGrid Rows="1">
+                                                <RadioButton
+                                                    x:Name="HomeModeProxy"
+                                                    MinHeight="44"
+                                                    Content="{s:T settings.mode.proxy}"
+                                                    FontSize="14.5"
+                                                    GroupName="HomeMode"
+                                                    Tag="proxy"
+                                                    Theme="{StaticResource SegmentOption}" />
+                                                <RadioButton
+                                                    x:Name="HomeModeTun"
+                                                    MinHeight="44"
+                                                    Content="{s:T settings.mode.tun}"
+                                                    FontSize="14.5"
+                                                    GroupName="HomeMode"
+                                                    Tag="tun"
+                                                    Theme="{StaticResource SegmentOption}" />
+                                            </UniformGrid>
+                                        </Border>
+                                        <Grid
+                                            MinHeight="44"
+                                            Margin="0,14,0,0"
+                                            ColumnDefinitions="*,Auto">
+                                            <TextBlock
+                                                Classes="rowLabel"
+                                                FontSize="15"
+                                                Foreground="{StaticResource TextBrush}"
+                                                Text="{s:T settings.killSwitch}" />
+                                            <CheckBox
+                                                x:Name="HomeKillSwitch"
+                                                Grid.Column="1"
+                                                Theme="{StaticResource Switch}" />
+                                        </Grid>
+                                        <Border Classes="divider" />
+                                        <Grid MinHeight="52" ColumnDefinitions="*,Auto">
+                                            <TextBlock
+                                                Classes="rowLabel"
+                                                FontSize="15"
+                                                Foreground="{StaticResource TextBrush}"
+                                                Text="{s:T settings.autoConnect}" />
+                                            <CheckBox
+                                                x:Name="HomeAutoConnect"
+                                                Grid.Column="1"
+                                                Theme="{StaticResource Switch}" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- Locations -->
+                    <Grid
+                        x:Name="LocationsPage"
+                        Margin="44,4,40,26"
+                        IsVisible="False"
+                        RowDefinitions="Auto,Auto,*">
+                        <Grid Margin="0,0,0,18" ColumnDefinitions="*,340">
+                            <StackPanel>
+                                <TextBlock Classes="kicker" Text="{s:T locations.kicker}" />
+                                <TextBlock
+                                    Margin="0,10,0,0"
+                                    Classes="h1"
+                                    Text="{s:T locations.title}" />
+                                <TextBlock
+                                    x:Name="LocationsSubtitle"
+                                    Margin="0,8,0,0"
+                                    Classes="muted" />
+                            </StackPanel>
+                            <Border
+                                Grid.Column="1"
+                                VerticalAlignment="Bottom"
+                                Classes="field">
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <Path
+                                        Width="16"
+                                        Height="16"
+                                        Margin="16,0,0,0"
+                                        Data="{StaticResource IconSearch}"
+                                        IsHitTestVisible="False"
+                                        Stretch="Uniform"
+                                        Stroke="{StaticResource DimBrush}"
+                                        StrokeThickness="1.8" />
+                                    <TextBox
+                                        x:Name="ServerSearchBox"
+                                        Grid.Column="1"
+                                        Padding="10,0,16,0"
+                                        Classes="bare"
+                                        PlaceholderText="{s:T locations.search}" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <Border
+                            Grid.Row="1"
+                            Margin="0,0,0,16"
+                            HorizontalAlignment="Left"
+                            Classes="segmentHost">
+                            <StackPanel x:Name="CategoryList" Orientation="Horizontal" />
+                        </Border>
+                        <Panel Grid.Row="2">
+                            <ListBox
+                                x:Name="ServerList"
+                                ItemTemplate="{StaticResource ServerRowTemplate}"
+                                Theme="{StaticResource PlainList}" />
+                            <TextBlock
+                                x:Name="ServerListEmpty"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Classes="muted"
+                                IsVisible="False" />
+                        </Panel>
+                    </Grid>
+
+                    <!-- Plan -->
+                    <ScrollViewer
+                        x:Name="PlanPage"
+                        HorizontalScrollBarVisibility="Disabled"
+                        IsVisible="False"
+                        VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="44,4,40,30">
+                            <TextBlock Classes="kicker" Text="{s:T pricing.kicker}" />
+                            <TextBlock
+                                Margin="0,10,0,0"
+                                Classes="h1"
+                                Text="{s:T pricing.title}" />
+                            <TextBlock
+                                MaxWidth="640"
+                                Margin="0,8,0,0"
+                                HorizontalAlignment="Left"
+                                Classes="muted"
+                                Text="{s:T pricing.sub}" />
+
+                            <Border
+                                x:Name="CurrentPlanStrip"
+                                Margin="0,20,0,0"
+                                Classes="tile">
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                    <Path
+                                        Width="18"
+                                        Height="18"
+                                        Data="{StaticResource IconShield}"
+                                        Stretch="Uniform"
+                                        Stroke="{StaticResource LilacBrush}"
+                                        StrokeThickness="1.8" />
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        Margin="12,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal">
+                                        <TextBlock Classes="small" Text="{s:T pricing.current}" />
+                                        <TextBlock
+                                            Margin="8,0,0,0"
+                                            FontSize="12.5"
+                                            Foreground="{StaticResource DimBrush}"
+                                            Text="·" />
+                                        <TextBlock
+                                            x:Name="CurrentPlanText"
+                                            Margin="8,0,0,0"
+                                            FontSize="13"
+                                            FontWeight="SemiBold" />
+                                    </StackPanel>
+                                    <Border
+                                        x:Name="CurrentPlanBadge"
+                                        Grid.Column="2"
+                                        Classes="badge">
+                                        <TextBlock x:Name="CurrentPlanBadgeText" Classes="badgeText" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <!-- Nothing is bought in the app, as on iOS and Android: the subscription
+                                 is managed in the customer account on app.colitu.com. -->
+                            <Border
+                                MaxWidth="720"
+                                Margin="0,16,0,0"
+                                Padding="28"
+                                HorizontalAlignment="Left"
+                                Classes="panel">
+                                <StackPanel>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <Panel
+                                            Width="48"
+                                            Height="48"
+                                            VerticalAlignment="Top">
+                                            <Ellipse Fill="{StaticResource IconWellBrush}" Stroke="{StaticResource LineStrongBrush}" />
+                                            <Path
+                                                Width="22"
+                                                Height="22"
+                                                Data="{StaticResource IconShield}"
+                                                Stretch="Uniform"
+                                                Stroke="{StaticResource LilacBrush}"
+                                                StrokeThickness="1.8" />
+                                        </Panel>
+                                        <StackPanel Grid.Column="1" Margin="16,2,0,0">
+                                            <TextBlock Classes="h2" Text="{s:T plan.manageTitle}" />
+                                            <TextBlock
+                                                Margin="0,8,0,0"
+                                                Classes="muted"
+                                                Text="{s:T plan.manageBody}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <StackPanel Margin="0,24,0,0" Orientation="Horizontal">
+                                        <Button
+                                            x:Name="ManagePlanButton"
+                                            Height="50"
+                                            MinWidth="240"
+                                            Padding="22,0"
+                                            Theme="{StaticResource PrimaryButton}">
+                                            <TextBlock FontSize="14.5" Text="{s:T plan.manageButton}" />
+                                        </Button>
+                                        <Button
+                                            x:Name="PlanRefreshButton"
+                                            Height="50"
+                                            MinWidth="180"
+                                            Margin="12,0,0,0"
+                                            Padding="22,0"
+                                            Theme="{StaticResource SecondaryButton}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse
+                                                    x:Name="PlanRefreshSpinner"
+                                                    Margin="0,0,10,0"
+                                                    Classes="spinner"
+                                                    IsVisible="False" />
+                                                <TextBlock FontSize="14" Text="{s:T plan.refresh}" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                    <StackPanel Margin="0,16,0,0" Orientation="Horizontal">
+                                        <Path
+                                            Width="13"
+                                            Height="13"
+                                            Margin="0,2,8,0"
+                                            VerticalAlignment="Top"
+                                            Data="{StaticResource IconLock}"
+                                            Stretch="Uniform"
+                                            Stroke="{StaticResource DimBrush}"
+                                            StrokeThickness="1.6" />
+                                        <TextBlock
+                                            MaxWidth="600"
+                                            FontSize="12"
+                                            Foreground="{StaticResource DimBrush}"
+                                            Text="{s:T plan.refreshHint}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Account -->
+                    <ScrollViewer
+                        x:Name="AccountPage"
+                        HorizontalScrollBarVisibility="Disabled"
+                        IsVisible="False"
+                        VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="44,4,40,30">
+                            <TextBlock Classes="kicker" Text="{s:T account.kicker}" />
+                            <TextBlock
+                                Margin="0,10,0,0"
+                                Classes="h1"
+                                Text="{s:T account.title}" />
+                            <Grid Margin="0,22,0,0" ColumnDefinitions="*,16,*">
+                                <StackPanel>
+                                    <Border Padding="26" Classes="panel">
+                                        <StackPanel>
+                                            <Grid ColumnDefinitions="Auto,*">
+                                                <Panel Width="60" Height="60">
+                                                    <Ellipse Fill="{StaticResource AccentBrush}" />
+                                                    <TextBlock
+                                                        x:Name="AvatarText"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        FontSize="21"
+                                                        FontWeight="SemiBold" />
+                                                </Panel>
+                                                <StackPanel
+                                                    Grid.Column="1"
+                                                    Margin="16,0,0,0"
+                                                    VerticalAlignment="Center">
+                                                    <TextBlock
+                                                        x:Name="AccountEmail"
+                                                        FontSize="18"
+                                                        FontWeight="SemiBold"
+                                                        TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock
+                                                        x:Name="AccountId"
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <Border
+                                                Height="1"
+                                                Margin="0,22,0,0"
+                                                Background="{StaticResource LineBrush}" />
+                                            <Grid Margin="0,16,0,0" ColumnDefinitions="*,Auto">
+                                                <TextBlock Classes="small" Text="{s:T account.plan}" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                    <TextBlock
+                                                        x:Name="AccountPlan"
+                                                        VerticalAlignment="Center"
+                                                        FontSize="13.5"
+                                                        FontWeight="Medium" />
+                                                    <Border
+                                                        x:Name="AccountPlanBadge"
+                                                        Margin="10,0,0,0"
+                                                        Classes="badge">
+                                                        <TextBlock x:Name="AccountPlanBadgeText" Classes="badgeText" />
+                                                    </Border>
+                                                </StackPanel>
+                                            </Grid>
+                                            <Grid Margin="0,14,0,0" ColumnDefinitions="*,Auto">
+                                                <TextBlock Classes="small" Text="{s:T account.validUntil}" />
+                                                <TextBlock
+                                                    x:Name="AccountUntil"
+                                                    Grid.Column="1"
+                                                    FontSize="13.5"
+                                                    FontWeight="Medium" />
+                                            </Grid>
+                                            <WrapPanel Margin="0,24,0,0">
+                                                <Button
+                                                    x:Name="ManageAccountButton"
+                                                    Height="42"
+                                                    Margin="0,0,10,10"
+                                                    Padding="18,0"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock FontSize="13.5" Text="{s:T account.manage}" />
+                                                </Button>
+                                                <Button
+                                                    x:Name="SignOutButton"
+                                                    Height="42"
+                                                    Margin="0,0,10,10"
+                                                    Padding="18,0"
+                                                    Theme="{StaticResource DangerButton}">
+                                                    <TextBlock FontSize="13.5" Text="{s:T account.signOut}" />
+                                                </Button>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border
+                                        Margin="0,16,0,0"
+                                        Padding="26"
+                                        Classes="panel">
+                                        <StackPanel>
+                                            <TextBlock Classes="h2" Text="{s:T account.help}" />
+                                            <TextBlock
+                                                Margin="0,6,0,0"
+                                                Classes="muted"
+                                                Text="{s:T account.helpHint}" />
+                                            <WrapPanel Margin="0,18,0,0">
+                                                <Button
+                                                    x:Name="SupportButton"
+                                                    Height="40"
+                                                    Margin="0,0,10,0"
+                                                    Padding="16,0"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock FontSize="13.5" Text="{s:T account.support}" />
+                                                </Button>
+                                                <Button
+                                                    x:Name="MailSupportButton"
+                                                    Height="40"
+                                                    Padding="16,0"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock FontSize="13.5" Text="{s:T account.mail}" />
+                                                </Button>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <Border
+                                    Grid.Column="2"
+                                    Padding="26"
+                                    VerticalAlignment="Top"
+                                    Classes="panel">
+                                    <StackPanel>
+                                        <TextBlock Classes="kicker" Text="{s:T account.devices}" />
+                                        <TextBlock
+                                            x:Name="DevicesTitle"
+                                            Margin="0,10,0,0"
+                                            Classes="h2" />
+                                        <ItemsControl x:Name="DeviceList" Margin="0,16,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="v:ColituDeviceRow">
+                                                    <Border
+                                                        Margin="0,0,0,8"
+                                                        Padding="14,12"
+                                                        Classes="tile">
+                                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                                            <Panel Width="36" Height="36">
+                                                                <Ellipse Fill="{StaticResource IconWellBrush}" Stroke="{StaticResource LineBrush}" />
+                                                                <Path
+                                                                    Width="17"
+                                                                    Height="17"
+                                                                    Data="{StaticResource IconDevice}"
+                                                                    Stretch="Uniform"
+                                                                    Stroke="{StaticResource LilacBrush}"
+                                                                    StrokeJoin="Round"
+                                                                    StrokeThickness="1.7" />
+                                                            </Panel>
+                                                            <StackPanel
+                                                                Grid.Column="1"
+                                                                Margin="12,0,8,0"
+                                                                VerticalAlignment="Center">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock
+                                                                        MaxWidth="230"
+                                                                        FontSize="14"
+                                                                        FontWeight="SemiBold"
+                                                                        Text="{Binding Name}"
+                                                                        TextTrimming="CharacterEllipsis" />
+                                                                    <Border
+                                                                        Margin="8,0,0,0"
+                                                                        Padding="7,2"
+                                                                        Classes="badge"
+                                                                        IsVisible="{Binding IsCurrent}">
+                                                                        <TextBlock
+                                                                            Classes="badgeText"
+                                                                            FontSize="9.5"
+                                                                            Text="{s:T account.thisDevice}" />
+                                                                    </Border>
+                                                                </StackPanel>
+                                                                <TextBlock
+                                                                    Margin="0,2,0,0"
+                                                                    FontSize="12"
+                                                                    Foreground="{StaticResource MutedBrush}"
+                                                                    Text="{Binding Detail}" />
+                                                            </StackPanel>
+                                                            <Button
+                                                                Grid.Column="2"
+                                                                Click="RemoveDevice_Click"
+                                                                Tag="{Binding}"
+                                                                Theme="{StaticResource IconButton}"
+                                                                ToolTip.Tip="{s:T account.remove}">
+                                                                <Path
+                                                                    Width="12"
+                                                                    Height="12"
+                                                                    Classes="stroke"
+                                                                    Data="{StaticResource IconX}" />
+                                                            </Button>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Settings -->
+                    <ScrollViewer
+                        x:Name="SettingsPage"
+                        HorizontalScrollBarVisibility="Disabled"
+                        IsVisible="False"
+                        VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="44,4,40,30">
+                            <TextBlock Classes="kicker" Text="{s:T settings.kicker}" />
+                            <TextBlock
+                                Margin="0,10,0,0"
+                                Classes="h1"
+                                Text="{s:T settings.title}" />
+                            <Grid Margin="0,22,0,0" ColumnDefinitions="*,16,*">
+                                <StackPanel>
+                                    <Border Padding="24" Classes="panel">
+                                        <StackPanel>
+                                            <TextBlock Classes="h2" Text="{s:T settings.connection}" />
+                                            <TextBlock
+                                                Margin="0,18,0,10"
+                                                Classes="fieldLabel"
+                                                Text="{s:T settings.mode}" />
+                                            <Border Classes="segmentHost">
+                                                <UniformGrid Rows="1">
+                                                    <RadioButton
+                                                        x:Name="SettingsModeProxy"
+                                                        Content="{s:T settings.mode.proxy}"
+                                                        GroupName="SettingsMode"
+                                                        Tag="proxy"
+                                                        Theme="{StaticResource SegmentOption}" />
+                                                    <RadioButton
+                                                        x:Name="SettingsModeTun"
+                                                        Content="{s:T settings.mode.tun}"
+                                                        GroupName="SettingsMode"
+                                                        Tag="tun"
+                                                        Theme="{StaticResource SegmentOption}" />
+                                                </UniformGrid>
+                                            </Border>
+                                            <TextBlock
+                                                x:Name="ModeHint"
+                                                Margin="2,10,0,0"
+                                                Classes="small" />
+
+                                            <Grid Margin="0,22,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.killSwitch}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.killSwitchHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsKillSwitch"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid Margin="0,18,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.dns}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.dnsHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsDns"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid
+                                                x:Name="SettingsAdBlockRow"
+                                                Margin="0,18,0,0"
+                                                ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.adBlock}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.adBlockHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsAdBlock"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid Margin="0,18,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.autoConnect}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.autoConnectHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsAutoConnect"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="2">
+                                    <Border Padding="24" Classes="panel">
+                                        <StackPanel>
+                                            <TextBlock Classes="h2" Text="{s:T settings.language}" />
+                                            <Border Margin="0,16,0,0" Classes="segmentHost">
+                                                <UniformGrid x:Name="SettingsLanguageList" Rows="1" />
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border
+                                        Margin="0,16,0,0"
+                                        Padding="24"
+                                        Classes="panel">
+                                        <StackPanel>
+                                            <TextBlock Classes="h2" Text="{s:T settings.app}" />
+                                            <Grid Margin="0,18,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.startup}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.startupHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsStartup"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid Margin="0,18,0,0" ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.tray}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.trayHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsTray"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border
+                                        Margin="0,16,0,0"
+                                        Padding="24"
+                                        Classes="panel">
+                                        <StackPanel>
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <StackPanel>
+                                                    <TextBlock Classes="h2" Text="{s:T settings.about}" />
+                                                    <TextBlock
+                                                        x:Name="VersionText"
+                                                        Margin="0,4,0,0"
+                                                        Classes="small" />
+                                                </StackPanel>
+                                                <Button
+                                                    x:Name="CheckUpdatesButton"
+                                                    Grid.Column="1"
+                                                    Height="38"
+                                                    Padding="16,0"
+                                                    VerticalAlignment="Center"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock
+                                                        x:Name="CheckUpdatesText"
+                                                        FontSize="13"
+                                                        Text="{s:T settings.checkUpdates}" />
+                                                </Button>
+                                            </Grid>
+                                            <WrapPanel Margin="0,18,0,0">
+                                                <Button
+                                                    x:Name="WebsiteButton"
+                                                    Margin="0,0,18,6"
+                                                    Content="{s:T settings.website}"
+                                                    Theme="{StaticResource LinkButton}" />
+                                                <Button
+                                                    x:Name="PrivacyButton"
+                                                    Margin="0,0,18,6"
+                                                    Content="{s:T settings.privacy}"
+                                                    Theme="{StaticResource LinkButton}" />
+                                                <Button
+                                                    x:Name="TermsButton"
+                                                    Margin="0,0,18,6"
+                                                    Content="{s:T settings.terms}"
+                                                    Theme="{StaticResource LinkButton}" />
+                                                <Button
+                                                    x:Name="LogsButton"
+                                                    Margin="0,0,18,6"
+                                                    Content="{s:T settings.logs}"
+                                                    Theme="{StaticResource LinkButton}" />
+                                            </WrapPanel>
+                                            <!-- Open source: the app is GPL-3.0 on GitHub -->
+                                            <Border
+                                                Margin="0,14,0,0"
+                                                Padding="16,14"
+                                                Background="{StaticResource SurfaceBrush}"
+                                                BorderBrush="{StaticResource LineBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="14">
+                                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                                    <Path
+                                                        Width="20"
+                                                        Height="20"
+                                                        Margin="0,0,14,0"
+                                                        VerticalAlignment="Center"
+                                                        Data="{StaticResource IconCode}"
+                                                        Stretch="Uniform"
+                                                        Stroke="{StaticResource AccentBrush}"
+                                                        StrokeJoin="Round"
+                                                        StrokeLineCap="Round"
+                                                        StrokeThickness="2" />
+                                                    <StackPanel
+                                                        Grid.Column="1"
+                                                        Margin="0,0,16,0"
+                                                        VerticalAlignment="Center">
+                                                        <TextBlock
+                                                            FontSize="14.5"
+                                                            FontWeight="Medium"
+                                                            Text="{s:T about.openSource}" />
+                                                        <TextBlock
+                                                            Margin="0,3,0,0"
+                                                            Classes="small"
+                                                            Text="{s:T about.openSourceHint}" />
+                                                    </StackPanel>
+                                                    <Button
+                                                        x:Name="SourceCodeButton"
+                                                        Grid.Column="2"
+                                                        Height="36"
+                                                        Padding="14,0"
+                                                        VerticalAlignment="Center"
+                                                        Theme="{StaticResource SecondaryButton}">
+                                                        <TextBlock FontSize="13" Text="{s:T about.viewSource}" />
+                                                    </Button>
+                                                </Grid>
+                                            </Border>
+                                            <StackPanel Margin="0,14,0,0" Orientation="Horizontal">
+                                                <Ellipse
+                                                    Width="6"
+                                                    Height="6"
+                                                    Margin="0,0,9,0"
+                                                    Fill="{StaticResource AccentBrush}" />
+                                                <TextBlock
+                                                    x:Name="CreditText"
+                                                    FontSize="12.5"
+                                                    Foreground="{StaticResource DimBrush}" />
+                                            </StackPanel>
+                                            <TextBlock
+                                                Margin="15,6,0,0"
+                                                FontSize="12"
+                                                Foreground="{StaticResource DimBrush}"
+                                                Text="{s:T about.credits}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Live support -->
+                    <Grid
+                        x:Name="SupportPage"
+                        Margin="44,4,40,26"
+                        IsVisible="False"
+                        RowDefinitions="Auto,*">
+                        <Grid Margin="0,0,0,20" ColumnDefinitions="*,Auto">
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock Classes="kicker" Text="{s:T support.kicker}" />
+                                <TextBlock
+                                    Margin="0,10,0,0"
+                                    Classes="h1"
+                                    Text="{s:T support.title}" />
+                                <TextBlock
+                                    Margin="0,8,0,0"
+                                    Classes="muted"
+                                    Text="{s:T support.sub}" />
+                            </StackPanel>
+                            <StackPanel
+                                Grid.Column="1"
+                                VerticalAlignment="Bottom"
+                                Orientation="Horizontal">
+                                <Button
+                                    x:Name="SupportHelpButton"
+                                    Height="42"
+                                    Margin="0,0,10,0"
+                                    Padding="16,0"
+                                    Theme="{StaticResource SecondaryButton}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path
+                                            Width="14"
+                                            Height="14"
+                                            Margin="0,0,8,0"
+                                            Classes="stroke text"
+                                            Data="{StaticResource IconBook}" />
+                                        <TextBlock FontSize="13.5" Text="{s:T support.help}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button
+                                    x:Name="SupportNewButton"
+                                    Height="42"
+                                    Padding="18,0"
+                                    Theme="{StaticResource PrimaryButton}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path
+                                            Width="13"
+                                            Height="13"
+                                            Margin="0,0,8,0"
+                                            Data="{StaticResource IconPlus}"
+                                            Stretch="Uniform"
+                                            Stroke="{StaticResource OnAccentBrush}"
+                                            StrokeLineCap="Round"
+                                            StrokeThickness="2" />
+                                        <TextBlock FontSize="13.5" Text="{s:T support.new}" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                        <Grid Grid.Row="1" ColumnDefinitions="300,16,*">
+                            <Border Padding="8" Classes="panel">
+                                <Panel>
+                                    <ListBox
+                                        x:Name="SupportList"
+                                        ItemTemplate="{StaticResource SupportRowTemplate}"
+                                        Theme="{StaticResource PlainList}" />
+                                    <TextBlock
+                                        x:Name="SupportListEmpty"
+                                        Margin="18"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Classes="small"
+                                        IsVisible="False"
+                                        Text="{s:T support.empty}"
+                                        TextAlignment="Center" />
+                                    <Ellipse
+                                        x:Name="SupportListSpinner"
+                                        Classes="spinner"
+                                        IsVisible="False" />
+                                </Panel>
+                            </Border>
+                            <Border
+                                Grid.Column="2"
+                                Padding="0"
+                                Classes="panel">
+                                <Panel>
+                                    <StackPanel
+                                        x:Name="SupportPlaceholder"
+                                        MaxWidth="320"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center">
+                                        <Panel Width="64" Height="64">
+                                            <Ellipse Fill="{StaticResource IconWellBrush}" Stroke="{StaticResource LineStrongBrush}" />
+                                            <Path
+                                                Width="26"
+                                                Height="26"
+                                                Data="{StaticResource IconChat}"
+                                                Stretch="Uniform"
+                                                Stroke="{StaticResource LilacBrush}"
+                                                StrokeJoin="Round"
+                                                StrokeThickness="1.8" />
+                                        </Panel>
+                                        <TextBlock
+                                            Margin="0,16,0,0"
+                                            Classes="muted"
+                                            Text="{s:T support.pick}"
+                                            TextAlignment="Center" />
+                                    </StackPanel>
+
+                                    <ScrollViewer
+                                        x:Name="SupportNewForm"
+                                        HorizontalScrollBarVisibility="Disabled"
+                                        IsVisible="False"
+                                        VerticalScrollBarVisibility="Auto">
+                                        <StackPanel Margin="28,24,28,24">
+                                            <TextBlock Classes="h2" Text="{s:T support.new}" />
+                                            <TextBlock
+                                                Margin="2,20,0,8"
+                                                Classes="fieldLabel"
+                                                Text="{s:T support.subject}" />
+                                            <Border Classes="field">
+                                                <TextBox
+                                                    x:Name="SupportSubjectBox"
+                                                    Classes="bare"
+                                                    MaxLength="160"
+                                                    PlaceholderText="{s:T support.subjectHint}" />
+                                            </Border>
+                                            <TextBlock
+                                                Margin="2,16,0,8"
+                                                Classes="fieldLabel"
+                                                Text="{s:T support.message}" />
+                                            <Border Classes="field">
+                                                <TextBox
+                                                    x:Name="SupportMessageBox"
+                                                    MinHeight="140"
+                                                    MaxHeight="260"
+                                                    Classes="bare area"
+                                                    MaxLength="8000"
+                                                    PlaceholderText="{s:T support.messageHint}" />
+                                            </Border>
+                                            <WrapPanel x:Name="SupportNewFiles" Margin="0,12,0,0" />
+                                            <Grid Margin="0,6,0,0" ColumnDefinitions="Auto,*">
+                                                <Button x:Name="SupportAttachNewButton" Theme="{StaticResource LinkButton}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Path
+                                                            Width="14"
+                                                            Height="14"
+                                                            Margin="0,0,7,0"
+                                                            Data="{StaticResource IconClip}"
+                                                            Stretch="Uniform"
+                                                            Stroke="{StaticResource LilacBrush}"
+                                                            StrokeThickness="1.7" />
+                                                        <TextBlock Text="{s:T support.attach}" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    HorizontalAlignment="Right"
+                                                    VerticalAlignment="Center"
+                                                    Classes="small"
+                                                    Text="{s:T support.attachHint}" />
+                                            </Grid>
+                                            <Border
+                                                Margin="0,16,0,0"
+                                                Padding="16,14"
+                                                Classes="tile">
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <StackPanel Margin="0,0,16,0">
+                                                        <TextBlock
+                                                            FontSize="14"
+                                                            FontWeight="Medium"
+                                                            Text="{s:T support.diagnostics}" />
+                                                        <TextBlock
+                                                            Margin="0,3,0,0"
+                                                            Classes="small"
+                                                            Text="{s:T support.diagnosticsHint}" />
+                                                    </StackPanel>
+                                                    <CheckBox
+                                                        x:Name="SupportDiagnostics"
+                                                        Grid.Column="1"
+                                                        IsChecked="True"
+                                                        Theme="{StaticResource Switch}" />
+                                                </Grid>
+                                            </Border>
+                                            <Border
+                                                x:Name="SupportErrorBox"
+                                                Margin="0,16,0,0"
+                                                Classes="errorBox"
+                                                IsVisible="False">
+                                                <TextBlock x:Name="SupportErrorText" Classes="errorText" />
+                                            </Border>
+                                            <StackPanel
+                                                Margin="0,20,0,0"
+                                                HorizontalAlignment="Right"
+                                                Orientation="Horizontal">
+                                                <Button
+                                                    x:Name="SupportCancelNewButton"
+                                                    Height="46"
+                                                    Margin="0,0,10,0"
+                                                    Padding="18,0"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock FontSize="14" Text="{s:T support.cancel}" />
+                                                </Button>
+                                                <Button
+                                                    x:Name="SupportCreateButton"
+                                                    Height="46"
+                                                    Padding="22,0"
+                                                    Theme="{StaticResource PrimaryButton}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse
+                                                            x:Name="SupportCreateSpinner"
+                                                            Margin="0,0,10,0"
+                                                            Classes="spinner onAccent"
+                                                            IsVisible="False" />
+                                                        <TextBlock FontSize="14" Text="{s:T support.create}" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </ScrollViewer>
+
+                                    <Grid
+                                        x:Name="SupportThread"
+                                        IsVisible="False"
+                                        RowDefinitions="Auto,*,Auto">
+                                        <Border
+                                            Padding="24,18"
+                                            BorderBrush="{StaticResource LineBrush}"
+                                            BorderThickness="0,0,0,1">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock
+                                                    x:Name="SupportThreadTitle"
+                                                    VerticalAlignment="Center"
+                                                    Classes="h2"
+                                                    TextTrimming="CharacterEllipsis"
+                                                    TextWrapping="NoWrap" />
+                                                <Border
+                                                    x:Name="SupportThreadStatus"
+                                                    Grid.Column="1"
+                                                    Margin="12,0,0,0"
+                                                    Padding="10,4"
+                                                    VerticalAlignment="Center"
+                                                    CornerRadius="9">
+                                                    <TextBlock
+                                                        x:Name="SupportThreadStatusText"
+                                                        FontSize="11"
+                                                        FontWeight="SemiBold" />
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                        <ScrollViewer
+                                            x:Name="SupportScroll"
+                                            Grid.Row="1"
+                                            HorizontalScrollBarVisibility="Disabled"
+                                            VerticalScrollBarVisibility="Auto">
+                                            <StackPanel x:Name="SupportMessages" Margin="24,18,24,10" />
+                                        </ScrollViewer>
+                                        <Border
+                                            Grid.Row="2"
+                                            Padding="16,14"
+                                            BorderBrush="{StaticResource LineBrush}"
+                                            BorderThickness="0,1,0,0">
+                                            <StackPanel>
+                                                <WrapPanel x:Name="SupportReplyFiles" />
+                                                <TextBlock
+                                                    x:Name="SupportClosedNote"
+                                                    Margin="4,0,0,0"
+                                                    Classes="small"
+                                                    IsVisible="False"
+                                                    Text="{s:T support.closed}" />
+                                                <Grid x:Name="SupportComposer" ColumnDefinitions="Auto,*,Auto">
+                                                    <Button
+                                                        x:Name="SupportAttachReplyButton"
+                                                        Margin="0,0,8,0"
+                                                        VerticalAlignment="Bottom"
+                                                        Theme="{StaticResource IconButton}"
+                                                        ToolTip.Tip="{s:T support.attach}">
+                                                        <Path Classes="stroke" Data="{StaticResource IconClip}" />
+                                                    </Button>
+                                                    <Border Grid.Column="1" Classes="field">
+                                                        <TextBox
+                                                            x:Name="SupportReplyBox"
+                                                            MinHeight="48"
+                                                            MaxHeight="150"
+                                                            Classes="bare area"
+                                                            MaxLength="8000"
+                                                            PlaceholderText="{s:T support.reply}" />
+                                                    </Border>
+                                                    <Button
+                                                        x:Name="SupportSendButton"
+                                                        Grid.Column="2"
+                                                        Width="48"
+                                                        Height="48"
+                                                        Margin="10,0,0,0"
+                                                        Padding="0"
+                                                        VerticalAlignment="Bottom"
+                                                        Theme="{StaticResource PrimaryButton}"
+                                                        ToolTip.Tip="{s:T support.send}">
+                                                        <Panel>
+                                                            <Path
+                                                                x:Name="SupportSendIcon"
+                                                                Width="17"
+                                                                Height="17"
+                                                                Data="{StaticResource IconSend}"
+                                                                Stretch="Uniform"
+                                                                Stroke="{StaticResource OnAccentBrush}"
+                                                                StrokeJoin="Round"
+                                                                StrokeLineCap="Round"
+                                                                StrokeThickness="2" />
+                                                            <Ellipse
+                                                                x:Name="SupportSendSpinner"
+                                                                Classes="spinner onAccent"
+                                                                IsVisible="False" />
+                                                        </Panel>
+                                                    </Button>
+                                                </Grid>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </Panel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Panel>
+            </Grid>
+
+            <!-- ── Update prompt (on start, over every screen) ─────────────── -->
+            <Panel
+                x:Name="UpdatePrompt"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    Width="440"
+                    Padding="34,32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <Panel
+                            Width="56"
+                            Height="56"
+                            HorizontalAlignment="Left">
+                            <Ellipse
+                                Fill="{StaticResource IconWellBrush}"
+                                Stroke="{StaticResource LineStrongBrush}"
+                                StrokeThickness="1" />
+                            <Path
+                                Width="22"
+                                Height="22"
+                                Data="{StaticResource IconDownload}"
+                                Stretch="Uniform"
+                                Stroke="{StaticResource LilacBrush}"
+                                StrokeJoin="Round"
+                                StrokeThickness="1.8" />
+                        </Panel>
+                        <TextBlock
+                            x:Name="UpdatePromptTitle"
+                            Margin="0,20,0,0"
+                            Classes="h2" />
+                        <TextBlock
+                            x:Name="UpdatePromptBody"
+                            Margin="0,10,0,0"
+                            Classes="muted" />
+                        <TextBlock
+                            x:Name="UpdatePromptStatus"
+                            Margin="0,14,0,0"
+                            Classes="small"
+                            IsVisible="False" />
+                        <Button
+                            x:Name="UpdatePromptNow"
+                            Height="50"
+                            Margin="0,22,0,0"
+                            HorizontalAlignment="Stretch"
+                            Theme="{StaticResource PrimaryButton}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse
+                                    x:Name="UpdatePromptSpinner"
+                                    Margin="0,0,10,0"
+                                    Classes="spinner onAccent"
+                                    IsVisible="False" />
+                                <TextBlock
+                                    x:Name="UpdatePromptNowText"
+                                    FontSize="15"
+                                    Text="{s:T update.now}" />
+                            </StackPanel>
+                        </Button>
+                        <Button
+                            x:Name="UpdatePromptLater"
+                            Height="46"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Stretch"
+                            Content="{s:T update.later}"
+                            Theme="{StaticResource SecondaryButton}" />
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- ── Administrator (sudo) password for TUN mode ──────────────── -->
+            <Panel
+                x:Name="SudoPrompt"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    Width="440"
+                    Padding="34,32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <Panel
+                            Width="56"
+                            Height="56"
+                            HorizontalAlignment="Left">
+                            <Ellipse
+                                Fill="{StaticResource IconWellBrush}"
+                                Stroke="{StaticResource LineStrongBrush}"
+                                StrokeThickness="1" />
+                            <Path
+                                Width="22"
+                                Height="22"
+                                Data="{StaticResource IconShield}"
+                                Stretch="Uniform"
+                                Stroke="{StaticResource LilacBrush}"
+                                StrokeJoin="Round"
+                                StrokeThickness="1.8" />
+                        </Panel>
+                        <TextBlock
+                            Margin="0,20,0,0"
+                            Classes="h2"
+                            Text="{s:T sudo.title}" />
+                        <TextBlock
+                            Margin="0,10,0,0"
+                            Classes="muted"
+                            Text="{s:T sudo.body}" />
+                        <Border Margin="0,20,0,0" Classes="field">
+                            <TextBox
+                                x:Name="SudoPasswordBox"
+                                Classes="bare"
+                                PasswordChar="•" />
+                        </Border>
+                        <Border
+                            x:Name="SudoErrorBox"
+                            Margin="0,14,0,0"
+                            Classes="errorBox"
+                            IsVisible="False">
+                            <TextBlock Classes="errorText" Text="{s:T sudo.wrong}" />
+                        </Border>
+                        <Button
+                            x:Name="SudoOkButton"
+                            Height="50"
+                            Margin="0,20,0,0"
+                            HorizontalAlignment="Stretch"
+                            Theme="{StaticResource PrimaryButton}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse
+                                    x:Name="SudoSpinner"
+                                    Margin="0,0,10,0"
+                                    Classes="spinner onAccent"
+                                    IsVisible="False" />
+                                <TextBlock FontSize="15" Text="{s:T sudo.ok}" />
+                            </StackPanel>
+                        </Button>
+                        <Button
+                            x:Name="SudoCancelButton"
+                            Height="46"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Stretch"
+                            Content="{s:T sudo.cancel}"
+                            Theme="{StaticResource SecondaryButton}" />
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- ── Confirmation (remove a device) ─────────────────────────── -->
+            <Panel
+                x:Name="ConfirmPrompt"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    Width="420"
+                    Padding="32,30"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <TextBlock x:Name="ConfirmText" Classes="body" />
+                        <StackPanel
+                            Margin="0,24,0,0"
+                            HorizontalAlignment="Right"
+                            Orientation="Horizontal">
+                            <Button
+                                x:Name="ConfirmCancelButton"
+                                Height="44"
+                                Margin="0,0,10,0"
+                                Padding="18,0"
+                                Content="{s:T confirm.cancel}"
+                                Theme="{StaticResource SecondaryButton}" />
+                            <Button
+                                x:Name="ConfirmOkButton"
+                                Height="44"
+                                Padding="18,0"
+                                Content="{s:T confirm.remove}"
+                                Theme="{StaticResource DangerButton}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- Window controls (always on top) -->
+            <StackPanel
+                Margin="0,15,16,0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Orientation="Horizontal">
+                <!-- Live support, with the unread badge; only while signed in. -->
+                <Button
+                    x:Name="SupportLauncher"
+                    Margin="0,0,6,0"
+                    IsVisible="False"
+                    RenderTransform="scale(1)"
+                    Theme="{StaticResource WindowButton}"
+                    ToolTip.Tip="{s:T support.title}">
+                    <Panel Width="34" Height="34">
+                        <Path
+                            Width="15"
+                            Height="15"
+                            Classes="stroke"
+                            Data="{StaticResource IconChat}" />
+                        <Border
+                            x:Name="SupportBadge"
+                            MinWidth="16"
+                            Height="16"
+                            Margin="0,1,0,0"
+                            Padding="4,0"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            Background="{StaticResource DangerBrush}"
+                            BorderBrush="#0E0E14"
+                            BorderThickness="1.5"
+                            CornerRadius="8"
+                            IsVisible="False">
+                            <TextBlock
+                                x:Name="SupportBadgeText"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                FontSize="9.5"
+                                FontWeight="Bold"
+                                Foreground="White" />
+                        </Border>
+                    </Panel>
+                </Button>
+                <Button
+                    x:Name="MinimizeButton"
+                    Theme="{StaticResource WindowButton}"
+                    ToolTip.Tip="{s:T window.minimize}">
+                    <!-- A flat line has no height to stretch: drawn at its own size. -->
+                    <Path
+                        Width="12"
+                        Height="2"
+                        Classes="stroke"
+                        Data="M0,1 H12"
+                        Stretch="None" />
+                </Button>
+                <Button
+                    x:Name="CloseButton"
+                    Margin="6,0,0,0"
+                    Theme="{StaticResource WindowCloseButton}"
+                    ToolTip.Tip="{s:T window.close}">
+                    <Path
+                        Width="11"
+                        Height="11"
+                        Classes="stroke"
+                        Data="{StaticResource IconX}" />
+                </Button>
+            </StackPanel>
+
+            <!-- Toast -->
+            <Border
+                x:Name="Toast"
+                MaxWidth="560"
+                Margin="0,0,0,28"
+                Padding="18,12"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Background="#F21B1B24"
+                BorderBrush="{StaticResource LineStrongBrush}"
+                BorderThickness="1"
+                BoxShadow="0 12 40 0 #99000000"
+                CornerRadius="20"
+                IsHitTestVisible="False"
+                Opacity="0"
+                RenderTransform="translateY(20px)">
+                <Border.Transitions>
+                    <Transitions>
+                        <DoubleTransition
+                            Easing="QuinticEaseOut"
+                            Property="Opacity"
+                            Duration="0:0:0.45" />
+                        <TransformOperationsTransition
+                            Easing="QuinticEaseOut"
+                            Property="RenderTransform"
+                            Duration="0:0:0.45" />
+                    </Transitions>
+                </Border.Transitions>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse
+                        x:Name="ToastDot"
+                        Width="8"
+                        Height="8"
+                        Margin="0,0,12,0"
+                        VerticalAlignment="Center"
+                        Fill="{StaticResource LilacBrush}" />
+                    <TextBlock
+                        x:Name="ToastText"
+                        MaxWidth="500"
+                        FontSize="13.5"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Resize grips: the window draws its own frame. -->
+            <Border x:Name="GripLeft" Width="6" HorizontalAlignment="Left" Background="Transparent" Cursor="SizeWestEast" />
+            <Border x:Name="GripRight" Width="6" HorizontalAlignment="Right" Background="Transparent" Cursor="SizeWestEast" />
+            <Border x:Name="GripTop" Height="6" VerticalAlignment="Top" Background="Transparent" Cursor="SizeNorthSouth" />
+            <Border x:Name="GripBottom" Height="6" VerticalAlignment="Bottom" Background="Transparent" Cursor="SizeNorthSouth" />
+            <Border x:Name="GripBottomRight" Width="14" Height="14" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="Transparent" Cursor="BottomRightCorner" />
+            <Border x:Name="GripBottomLeft" Width="14" Height="14" HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="Transparent" Cursor="BottomLeftCorner" />
+        </Panel>
+    </Border>
+</Window>

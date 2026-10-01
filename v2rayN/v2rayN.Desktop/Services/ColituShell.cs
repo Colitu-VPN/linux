@@ -1,0 +1,70 @@
+using System.Diagnostics;
+using Process = System.Diagnostics.Process;
+namespace v2rayN.Desktop.Services;
+
+/// <summary>
+/// Opens links and folders for the user through the desktop's own handler
+/// (xdg-open). Only web and mail links are accepted, never programs or files,
+/// so nothing the panel or support sends can be executed through here.
+/// </summary>
+public static class ColituShell
+{
+    /// <summary>True for absolute https:// links (and mailto: when <paramref name="allowMail"/>).</summary>
+    internal static bool IsSafeLink(string? url, bool allowMail = true)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+        if (allowMail && uri.Scheme == Uri.UriSchemeMailto)
+        {
+            return true;
+        }
+        return uri.Scheme == Uri.UriSchemeHttps
+            && !string.IsNullOrEmpty(uri.Host)
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && !uri.IsUnc;
+    }
+
+    public static bool OpenUrl(string? url, bool allowMail = true)
+    {
+        if (!IsSafeLink(url, allowMail))
+        {
+            Logging.SaveLog($"ColituShell.OpenUrl: refused link with an unsupported scheme or form ({Truncate(url)})");
+            return false;
+        }
+        return XdgOpen(new Uri(url!.Trim()).AbsoluteUri);
+    }
+
+    /// <summary>Shows one of the app's own folders (logs, downloaded attachments).</summary>
+    public static bool OpenFolder(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var allowed = new[] { Utils.StartupPath(), ColituSupportService.DownloadFolder }
+            .Select(Path.GetFullPath)
+            .Any(root => full.StartsWith(root, StringComparison.Ordinal));
+        if (!allowed || !Directory.Exists(full))
+        {
+            return false;
+        }
+        return XdgOpen(full);
+    }
+
+    private static bool XdgOpen(string target)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
+            startInfo.ArgumentList.Add(target);
+            using var _ = Process.Start(startInfo);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituShell.XdgOpen", ex);
+            return false;
+        }
+    }
+
+    private static string Truncate(string? value) => value == null ? "" : value.Length <= 80 ? value : value[..80];
+}
