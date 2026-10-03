@@ -15,8 +15,8 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Colitu tests
-        run: dotnet test --project v2rayN/ColituVPN.Tests -c Release
+        run: dotnet test --project src/ColituVPN.Tests -c Release
       - name: ServiceLib tests
-        run: dotnet test --project v2rayN/ServiceLib.Tests -c Release
+        run: dotnet test --project src/ServiceLib.Tests -c Release
       - name: Linux build
-        run: dotnet build v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj -c Release -r linux-x64
+        run: dotnet build src/ColituVPN/ColituVPN.csproj -c Release -r linux-x64

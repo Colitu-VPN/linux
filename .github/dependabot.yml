@@ -6,6 +6,6 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "nuget"
-    directory: "/v2rayN"
+    directory: "/src"
     schedule:
       interval: "weekly"

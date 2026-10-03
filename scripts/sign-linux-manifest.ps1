@@ -72,4 +72,4 @@ $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path $manifestPath -Encoding 
 
 Write-Host "Manifest: $manifestPath"
 Write-Host "Packages: $debName, $rpmName"
-Write-Host "Check it with: `$env:COLITU_VERIFY_MANIFEST='$manifestPath'; dotnet test --project v2rayN/ColituVPN.Tests"
+Write-Host "Check it with: `$env:COLITU_VERIFY_MANIFEST='$manifestPath'; dotnet test --project src/ColituVPN.Tests"

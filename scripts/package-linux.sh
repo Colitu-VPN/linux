@@ -4,9 +4,9 @@
 #   scripts/package-linux.sh <version> <x64|arm64> <publish-dir> <out-dir>
 #
 # <publish-dir> is the output of
-#   dotnet publish v2rayN/v2rayN.Desktop -c Release -r linux-<arch> -p:SelfContained=true -p:Version=<version>
-# The Xray and sing-box cores (with their rule files) are taken from 2dust/v2rayN-core-bin,
-# the same bundle the v2rayN Linux releases ship. Needs: curl, unzip, rsync, dpkg-deb, rpmbuild.
+#   dotnet publish src/ColituVPN -c Release -r linux-<arch> -p:SelfContained=true -p:Version=<version>
+# The Xray and sing-box cores (with their rule files) are taken from the prebuilt
+# core bundle in 2dust/v2rayN-core-bin. Needs: curl, unzip, rsync, dpkg-deb, rpmbuild.
 set -euo pipefail
 
 VERSION="${1:?version}"
@@ -80,7 +80,7 @@ StartupWMClass=ColituVPN
 EOF
 chmod 0644 "$STAGE/usr/share/applications/colitu-vpn.desktop"
 
-ICON="$ROOT/v2rayN/v2rayN.Desktop/Assets/Colitu/colitu-icon.png"
+ICON="$ROOT/src/ColituVPN/Assets/Colitu/colitu-icon.png"
 install -m 0644 "$ICON" "$STAGE/usr/share/icons/hicolor/256x256/apps/colitu-vpn.png"
 install -m 0644 "$ICON" "$STAGE/usr/share/pixmaps/colitu-vpn.png"
 install -m 0644 "$ROOT/LICENSE" "$STAGE/usr/share/doc/colitu-vpn/copyright"
@@ -105,7 +105,7 @@ Recommends: sudo, nftables, pkexec | policykit-1, libnotify-bin, xdg-utils
 Description: Colitu VPN desktop client for Linux
  Sign in with your Colitu account and connect with one click. Proxy and
  TUN modes, kill switch (nftables), DNS leak protection, ad blocking and
- live support. Based on v2rayN (GPL-3.0) with the Xray and sing-box cores.
+ live support. Includes the Xray and sing-box cores.
 EOF
 cat > "$DEB/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -144,7 +144,7 @@ Recommends:     sudo, nftables, polkit, libnotify, xdg-utils
 %description
 Sign in with your Colitu account and connect with one click. Proxy and
 TUN modes, kill switch (nftables), DNS leak protection, ad blocking and
-live support. Based on v2rayN (GPL-3.0) with the Xray and sing-box cores.
+live support. Includes the Xray and sing-box cores.
 
 %install
 mkdir -p %{buildroot}

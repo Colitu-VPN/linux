@@ -11,7 +11,7 @@ SING_VER="${SING_VER:-}"
 
 MIN_KERNEL="6.12"
 PKGROOT="colitu-vpn-publish"
-PROJECT_HINT="v2rayN.Desktop/v2rayN.Desktop.csproj"
+PROJECT_HINT="src/ColituVPN/ColituVPN.csproj"
 RPM_TOPDIR="${HOME}/rpmbuild"
 
 OS_ID=""
@@ -117,8 +117,8 @@ prepare_workspace() {
   fi
 
   PROJECT="$PROJECT_HINT"
-  [[ -f "$PROJECT" ]] || PROJECT="$(find . -maxdepth 3 -name 'v2rayN.Desktop.csproj' | head -n1 || true)"
-  [[ -f "$PROJECT" ]] || die "v2rayN.Desktop.csproj not found"
+  [[ -f "$PROJECT" ]] || PROJECT="$(find . -maxdepth 3 -name 'ColituVPN.csproj' | head -n1 || true)"
+  [[ -f "$PROJECT" ]] || die "ColituVPN.csproj not found"
 }
 
 choose_channel() {
@@ -382,7 +382,7 @@ populate_assets_zip_mode() {
 
   url="$(bundle_url_for_rid "$rid")" || { echo "[!] Bundle unsupported RID: $rid"; return 1; }
 
-  echo "[+] Try v2rayN bundle archive: $url"
+  echo "[+] Try core bundle archive: $url"
 
   tmp="$(mktemp -d)"
   curl -fL "$url" -o "$tmp/v2rayn.zip" || { echo "[!] Bundle download failed"; rm -rf "$tmp"; return 1; }
@@ -436,7 +436,7 @@ stage_runtime_assets() {
 
   if [[ "$FORCE_NETCORE" -eq 0 ]]; then
     if populate_assets_zip_mode "$outroot" "$rid"; then
-      echo "[*] Using v2rayN bundle archive."
+      echo "[*] Using core bundle archive."
     else
       echo "[*] Bundle failed, fallback to separate core + rules."
       populate_assets_netcore_mode "$outroot" "$rid"
@@ -497,10 +497,10 @@ Requires:       freetype >= 2.13
 Recommends:     sudo, nftables, polkit, libnotify
 
 %description
-Colitu VPN for Red Hat Enterprise Linux and Fedora. Based on v2rayN (GPL-3.0).
-Support vless / vmess / Trojan / http / socks / Anytls / Hysteria2 / Shadowsocks / tuic / WireGuard
-Support Red Hat Enterprise Linux / Fedora Linux / Rocky Linux / AlmaLinux / CentOS
-For more information, Please visit our website
+Colitu VPN for Red Hat Enterprise Linux, Fedora, Rocky Linux and AlmaLinux.
+Sign in with your Colitu account and connect with one click. Xray and
+sing-box cores, proxy and TUN modes, kill switch (nftables), DNS leak
+protection and live support. More information: https://colitu.com
 https://colitu.com
 
 %prep

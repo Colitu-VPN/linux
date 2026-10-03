@@ -1,17 +1,15 @@
 # Colitu VPN for Linux
 
-The open-source Linux desktop client of [Colitu VPN](https://colitu.com). It
-keeps the core management, system proxy, TUN, routing and DNS layers of
-[v2rayN](https://github.com/2dust/v2rayN) (the Avalonia build, the same project
-the [Windows client](https://github.com/cyberlexs/colitu-windows) is built on)
-and puts a single Colitu window on top that handles the account, servers and
-connection through the Colitu API.
+The open-source Linux desktop client of [Colitu VPN](https://colitu.com). A
+single native window handles the account, locations and connection through the
+Colitu API; underneath, a core layer runs Xray and sing-box and manages the
+system proxy, TUN, routing and DNS. It shares that core layer with the
+[Windows client](https://github.com/cyberlexs/colitu-windows).
 
 | | |
 |---|---|
 | App | `Colitu VPN` (`/opt/colitu-vpn/ColituVPN`, launcher `colitu-vpn`), Avalonia on .NET 10 |
-| Version | `1.0.0` (`v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj`) |
-| Base | [v2rayN](https://github.com/2dust/v2rayN) `7.25.4` |
+| Version | `1.0.0` (`src/ColituVPN/ColituVPN.csproj`) |
 | OS | Debian/Ubuntu/Mint (`.deb`), Fedora/RHEL/openSUSE (`.rpm`), any distribution (`.tar.gz`); x64 and arm64 |
 | Languages | Russian, English, Turkish |
 | License | [GPL-3.0](LICENSE) |
@@ -36,7 +34,7 @@ connection through the Colitu API.
   to the panel.
 - **Proxy and TUN modes.** Proxy mode sets the desktop's system proxy (GNOME,
   KDE) and needs no extra rights. TUN mode sends all traffic through the tunnel;
-  like v2rayN it runs the core as root through `sudo`, so the app asks for the
+  it runs the core as root through `sudo`, so the app asks for the
   sudo password once per run and keeps it in memory only.
 - **Kill switch** on nftables (TUN mode). While it is on, only loopback, the
   tunnel, the local network, DHCP, the VPN servers and the Colitu API can be
@@ -58,24 +56,21 @@ connection through the Colitu API.
 
 | Path | Contents |
 |---|---|
-| `v2rayN/v2rayN.Desktop/Views/ColituMainWindow*` | the Colitu window (sign-in, home, locations, plan, account, settings, support) |
-| `v2rayN/v2rayN.Desktop/Services/Colitu*` | API, session, VPN, kill switch, updates, support, localization |
-| `v2rayN/v2rayN.Desktop/Assets/Colitu` | theme, fonts, logo and flags |
-| `v2rayN/ServiceLib` | v2rayN's core, config and proxy logic (a few small Colitu patches) |
-| `v2rayN/ColituVPN.Tests`, `v2rayN/ServiceLib.Tests` | tests |
+| `src/ColituVPN/Views/ColituMainWindow*` | the Colitu window (sign-in, home, locations, plan, account, settings, support) |
+| `src/ColituVPN/Services/Colitu*` | API, session, VPN, kill switch, updates, support, localization |
+| `src/ColituVPN/Assets/Colitu` | theme, fonts, logo and flags |
+| `src/ServiceLib` | core layer: config generation, routing, DNS, core processes |
+| `src/ColituVPN.Tests`, `src/ServiceLib.Tests` | tests |
 | `package-debian.sh`, `package-rhel.sh` | packages |
 | `scripts/sign-linux-manifest.ps1` | signs the update manifest |
-
-The v2rayN Windows (WPF) app, the macOS packaging and the Windows global-hotkey
-library of upstream v2rayN are not part of this repository.
 
 ## Build
 
 Requires the .NET 10 SDK.
 
 ```sh
-cd v2rayN
-dotnet publish v2rayN.Desktop/v2rayN.Desktop.csproj -c Release -r linux-x64 -p:SelfContained=true -o ../out/linux-x64
+cd src
+dotnet publish ColituVPN/ColituVPN.csproj -c Release -r linux-x64 -p:SelfContained=true -o ../out/linux-x64
 dotnet test --project ColituVPN.Tests
 ```
 
@@ -85,10 +80,9 @@ package scripts read `COLITU_ADBLOCK_DOH`). Without them the ad-block switch is 
 
 ## Release
 
-1. Set the version in `v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj`.
+1. Set the version in `src/ColituVPN/ColituVPN.csproj`.
 2. Push a tag `vX.Y.Z`. The `Release Linux` workflow tests, publishes x64 and
-   arm64, packages `.deb`, `.rpm` and `.tar.gz` (`scripts/package-linux.sh`,
-   cores from 2dust/v2rayN-core-bin) and attaches them with `SHA256SUMS` to
+   arm64, packages `.deb`, `.rpm` and `.tar.gz` (`scripts/package-linux.sh`) and attaches them with `SHA256SUMS` to
    the GitHub release. The ad-block DNS list comes from the `COLITU_ADBLOCK_DOH`
    repository secret.
 3. Sign the update manifest offline (PowerShell 7, release key outside the repository):
@@ -116,11 +110,13 @@ sudo dnf install ./colitu-vpn-X.Y.Z-1.x86_64.rpm
 Any other distribution: unpack `colitu-vpn-X.Y.Z-linux-x64.tar.gz` and run
 `./ColituVPN`. TUN mode and the kill switch need `sudo` and `nftables`.
 
-## Upstream
+## License
 
-The first commit is v2rayN `7.25.4` with the Colitu changes on top. To take a
-newer v2rayN, apply its diff since 7.25.4 (`git diff 7.25.4 <new tag>` in a
-v2rayN checkout) to `v2rayN/ServiceLib` and `v2rayN/v2rayN.Desktop` and run the tests.
+Colitu VPN for Linux is distributed under the
+[GNU General Public License v3.0](LICENSE). It includes open-source components
+that keep their own licenses; Xray-core (MPL-2.0) and sing-box (GPL-3.0) are
+bundled as separate programs. See [NOTICE](NOTICE) for the full list.
 
-v2rayN is © 2017 2dust and contributors, licensed under GPL-3.0. Xray-core
-(MPL-2.0) and sing-box (GPL-3.0) are bundled as separate programs.
+The "Colitu" name and logo are trademarks of Colitu and are not covered by the
+GPL. If you redistribute a modified version, please use your own name and
+branding.

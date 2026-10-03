@@ -44,7 +44,7 @@ jobs:
         run: echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       - name: Test
-        run: dotnet test --project v2rayN/ColituVPN.Tests -c Release
+        run: dotnet test --project src/ColituVPN.Tests -c Release
 
       - name: Publish
         env:
@@ -53,7 +53,7 @@ jobs:
           ColituAdBlockDoh: ${{ secrets.COLITU_ADBLOCK_DOH }}
         run: |
           case "$ColituAdBlockDoh" in https://*) ;; *) echo "::error::COLITU_ADBLOCK_DOH secret is missing"; exit 1 ;; esac
-          dotnet publish v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj -c Release -r linux-${{ matrix.arch }} \
+          dotnet publish src/ColituVPN/ColituVPN.csproj -c Release -r linux-${{ matrix.arch }} \
             -p:SelfContained=true -p:PublishSingleFile=false -p:Version="$VERSION" -o publish
 
       - name: Package
