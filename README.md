@@ -1,5 +1,10 @@
 # Colitu VPN for Linux
 
+[![Build](https://img.shields.io/github/actions/workflow/status/colitu/colitu-linux/test.yml?branch=main&style=flat-square&label=build&labelColor=101014)](https://github.com/colitu/colitu-linux/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/colitu/colitu-linux?style=flat-square&labelColor=101014&color=7c6cff&include_prereleases)](https://github.com/colitu/colitu-linux/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0-7c6cff?style=flat-square&labelColor=101014)](LICENSE)
+[![Colitu Network](https://img.shields.io/endpoint?url=https%3A%2F%2Fstatus.colitu.com%2Fapi%2Fgithub-badge%3Fcomponent%3Dnetwork&style=flat-square)](https://status.colitu.com)
+
 The open-source Linux desktop client of [Colitu VPN](https://colitu.com). A
 single native window handles the account, locations and connection through the
 Colitu API; underneath, a core layer runs Xray and sing-box and manages the
