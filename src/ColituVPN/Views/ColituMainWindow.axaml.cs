@@ -549,7 +549,7 @@ public partial class ColituMainWindow : Window
 
             _trayIcon = new TrayIcon
             {
-                Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://ColituVPN/Assets/Colitu/colitu.ico"))),
+                Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://ColituVPN/Assets/Colitu/colitu-tray.ico"))),
                 ToolTipText = "Colitu VPN",
                 Menu = menu,
                 IsVisible = true

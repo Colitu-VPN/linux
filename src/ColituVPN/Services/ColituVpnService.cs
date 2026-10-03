@@ -27,6 +27,7 @@ public sealed class ColituVpnService
     private ColituVpnSession _session = new();
     private ESysProxyType? _restoreSysProxyType;
     private string? _lastCoreMessage;
+    private volatile bool _credentialsRefused;
 
     private List<ColituVpnServer> _lastServers = [];
     private Timer? _watchdog;
@@ -147,6 +148,7 @@ public sealed class ColituVpnService
         SetStatus(ColituVpnStatus.Connecting);
         LastError = null;
         _lastCoreMessage = null;
+        _credentialsRefused = false;
         SaveState();
 
         try
@@ -158,7 +160,7 @@ public sealed class ColituVpnService
                 LogConnection($"Another VPN adapter holds a default route: {other}");
                 Notice?.Invoke("warn.otherVpn");
             }
-            var config = await FetchConfigAsync(server);
+            var config = await FetchConfigAsync(server, token);
             token.ThrowIfCancellationRequested();
             if (config.ServerId.IsNotEmpty() && server?.Id is { } requested && !string.Equals(config.ServerId, requested, StringComparison.OrdinalIgnoreCase))
             {
@@ -168,8 +170,21 @@ public sealed class ColituVpnService
 
             var connected = FindServer(config.ServerId) ?? config.Server ?? server;
             var profiles = await ImportConfigAsync(config, connected);
-            await PrepareConnectionModeAsync();
-            await StartFirstWorkingProfileAsync(profiles, config, connected, token);
+            await PrepareConnectionModeAsync(config.Server?.CountryCode ?? connected?.CountryCode);
+            try
+            {
+                await StartFirstWorkingProfileAsync(profiles, config, connected, token);
+            }
+            catch (Exception ex) when (_credentialsRefused && ex is not OperationCanceledException)
+            {
+                // The panel creates this device's credentials for a server the first time it is
+                // chosen; the server applies them some seconds later and refuses us until then.
+                LogConnection("The server refused the credentials (new on this server); retrying in 15 s");
+                await StopCoreAsync();
+                await Task.Delay(TimeSpan.FromSeconds(15), token);
+                _credentialsRefused = false;
+                await StartFirstWorkingProfileAsync(profiles, config, connected, token);
+            }
             ConnectedServer = connected;
             ConnectedAt = DateTimeOffset.Now;
             _probeFailures = 0;
@@ -215,22 +230,37 @@ public sealed class ColituVpnService
     /// reached (offline, blocked, down) the last settings received for the same
     /// choice are reused until their offline grace period ends.
     /// </summary>
-    private async Task<ColituVpnConfigResponse> FetchConfigAsync(ColituVpnServer? server)
+    private async Task<ColituVpnConfigResponse> FetchConfigAsync(ColituVpnServer? server, CancellationToken token)
     {
         var cacheKey = server?.Id ?? "auto";
+        var watch = Stopwatch.StartNew();
+        // The previous tunnel may just have stopped: never reuse a connection opened over its route.
+        ResetDirectConnections();
         try
         {
-            await _api.SetPreferredServerAsync(server?.Id);
-            var config = await _api.GetConfigAsync(server)
+            await _api.SetPreferredServerAsync(server?.Id, token);
+            var preferenceMs = watch.ElapsedMilliseconds;
+            var config = await _api.GetConfigAsync(server, token)
                 ?? throw new ColituConnectException(Loc.I["err.noServers"]);
+            LogConnection($"Panel answered in {watch.ElapsedMilliseconds} ms (preference {preferenceMs} ms, config {watch.ElapsedMilliseconds - preferenceMs} ms)");
             SaveCachedConfig(cacheKey, config);
             return config;
         }
-        catch (Exception ex) when (IsNetworkFailure(ex) && LoadCachedConfig(cacheKey) is { } cached)
+        catch (Exception ex) when (!token.IsCancellationRequested && IsNetworkFailure(ex) && LoadCachedConfig(cacheKey) is { } cached)
         {
-            LogConnection($"Panel unreachable ({ex.GetType().Name}); using cached connection settings for {cacheKey}");
+            LogConnection($"Panel unreachable after {watch.ElapsedMilliseconds} ms ({ex.GetType().Name}); using cached connection settings for {cacheKey}");
             return cached;
         }
+    }
+
+    /// <summary>
+    /// Keep-alive connections to the panel and the DNS resolvers die when the tunnel goes up or
+    /// down (their route changes underneath them); reusing one hangs until its timeout.
+    /// </summary>
+    private static void ResetDirectConnections()
+    {
+        ColituAuthService.Instance.ResetConnections();
+        ColituNetwork.ResetConnections();
     }
 
     public async Task DisconnectAsync()
@@ -438,6 +468,13 @@ public sealed class ColituVpnService
     {
         try
         {
+            // Without this the watchdog sees the stopped core as a dropped tunnel and starts
+            // reconnecting (proxy, TUN) while the session is ending.
+            _userDisconnected = true;
+            _watchdog?.Dispose();
+            _watchdog = null;
+            _connectCts?.Cancel();
+            SetStatus(ColituVpnStatus.Disconnected);
             Task.Run(async () =>
             {
                 await StopCoreAsync();
@@ -921,13 +958,24 @@ public sealed class ColituVpnService
 
                 try
                 {
+                    _lastCoreMessage = null;
                     await ReloadCoreAsync(token);
-                    var probe = await VerifyConnectionActiveAsync(server, isLast ? 2 : 1, token);
+                    // Hysteria2's first QUIC handshake right after the TUN adapter appears sometimes
+                    // needs longer than one round; it gets a second one unless the server refused us.
+                    var rounds = isLast || candidate.Protocol == "hysteria2" ? 2 : 1;
+                    var probe = await VerifyConnectionActiveAsync(server, rounds, token);
                     observations.Add(new ColituProtocolObservation { Protocol = candidate.Protocol, Reachable = probe.Success, LatencyMs = probe.LatencyMs });
                     if (probe.Success)
                     {
                         _activeTransport = candidate.Protocol;
                         return;
+                    }
+                    // A transport that carried nothing goes last on the next attempts too (UDP blocked on
+                    // this network), so a reconnect does not wait for it again. Refused credentials are
+                    // a server still applying new ones, not a property of the transport.
+                    if (!_credentialsRefused)
+                    {
+                        _stalledTransports[candidate.Protocol] = DateTimeOffset.UtcNow.AddMinutes(10);
                     }
                     if (isLast)
                     {
@@ -950,12 +998,12 @@ public sealed class ColituVpnService
         }
     }
 
-    private async Task PrepareConnectionModeAsync()
+    private async Task PrepareConnectionModeAsync(string? serverCountry)
     {
         EnsureSudoForTun();
         var preferences = _session.Preferences.Normalize();
         await ApplyRuntimePreferencesAsync(preferences);
-        await EnsureColituRoutingAsync(preferences);
+        await EnsureColituRoutingAsync(preferences, serverCountry);
 
         if (!_config.TunModeItem.EnableTun && _config.SystemProxyItem.SysProxyType != ESysProxyType.ForcedChange)
         {
@@ -989,11 +1037,13 @@ public sealed class ColituVpnService
         // answer 0.0.0.0 for ad and tracker domains. In TUN mode that already stops the apps; in
         // proxy mode the browser hands the domain to the core, so the core resolves it first
         // (IPIfNonMatch) and the 0.0.0.0 rule in BuildColituRoutingRules drops the connection.
+        // IPIfNonMatch is also what sends a domain the Russian rules do not name out directly
+        // when its address is in Russia (as on iOS and Android).
         _config.SimpleDNSItem ??= new SimpleDNSItem();
         _config.SimpleDNSItem.RemoteDNS = (preferences.AdBlockEnabled && AdBlockAvailable)
             ? string.Join(",", ColituAdBlockDohServers)
             : Global.DomainRemoteDNSAddress.First();
-        _config.RoutingBasicItem.DomainStrategy = (preferences.AdBlockEnabled && AdBlockAvailable) ? Global.IPIfNonMatch : Global.AsIs;
+        _config.RoutingBasicItem.DomainStrategy = Global.IPIfNonMatch;
 
         await ConfigHandler.SaveConfig(_config);
     }
@@ -1020,14 +1070,14 @@ public sealed class ColituVpnService
         !string.IsNullOrWhiteSpace(host)
         && ColituAdBlockDohServers.Any(url => string.Equals(new Uri(url).Host, host.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    private async Task EnsureColituRoutingAsync(ColituVpnPreferences preferences)
+    private async Task EnsureColituRoutingAsync(ColituVpnPreferences preferences, string? serverCountry)
     {
         preferences = preferences.Normalize();
         await ConfigHandler.InitBuiltinRouting(_config);
         var items = await AppManager.Instance.RoutingItems() ?? [];
         var activeRouting = items.FirstOrDefault(item => item.IsActive);
         var routing = items.FirstOrDefault(item => string.Equals(item.Remarks, ColituRoutingRemarks, StringComparison.OrdinalIgnoreCase));
-        var rules = BuildColituRoutingRules(preferences);
+        var rules = BuildColituRoutingRules(preferences, serverCountry);
 
         routing ??= new RoutingItem
         {
@@ -1053,11 +1103,21 @@ public sealed class ColituVpnService
         }
 
         await ConfigHandler.SetDefaultRouting(_config, routing);
-        LogConnection("Routing profile applied: DNS protection only");
+        LogConnection(RussianSitesDirect(serverCountry)
+            ? "Routing profile applied: DNS protection, Russian sites direct"
+            : "Routing profile applied: DNS protection, Russian sites through the Russian server");
     }
 
-    private static List<RulesItem> BuildColituRoutingRules(ColituVpnPreferences preferences)
+    /// <summary>
+    /// Russian sites skip the tunnel unless the server itself is in Russia: someone abroad who
+    /// picks the Moscow server wants exactly those sites to see a Russian address.
+    /// </summary>
+    internal static bool RussianSitesDirect(string? serverCountry) =>
+        !string.Equals(serverCountry?.Trim(), "RU", StringComparison.OrdinalIgnoreCase);
+
+    internal static List<RulesItem> BuildColituRoutingRules(ColituVpnPreferences preferences, string? serverCountry = null)
     {
+        var ruDirect = RussianSitesDirect(serverCountry);
         preferences = preferences.Normalize();
         var rules = new List<RulesItem>();
 
@@ -1078,6 +1138,29 @@ public sealed class ColituVpnService
             OutboundTag = Global.BlockTag,
             Ip = ["0.0.0.0/32", "::/128"],
             Enabled = (preferences.AdBlockEnabled && AdBlockAvailable)
+        });
+
+        // Russian sites and apps (banks, Gosuslugi, Wildberries, ...) refuse connections from a
+        // foreign IP ("turn off your VPN"), so they go out directly, as on iOS and Android; through
+        // a Russian server they already arrive from a Russian address and stay in the tunnel.
+        // Xray reads these from bin/geo*.dat (XRAY_LOCATION_ASSET), sing-box from bin/srss/*.srs
+        // (shipped by scripts/package-linux.sh; GitHub, where sing-box would fetch them, is blocked in Russia).
+        rules.Add(new RulesItem
+        {
+            Id = "colitu-ru-direct-domain",
+            Remarks = "Russian sites direct",
+            OutboundTag = Global.DirectTag,
+            Domain = ["geosite:category-ru"],
+            Enabled = ruDirect
+        });
+
+        rules.Add(new RulesItem
+        {
+            Id = "colitu-ru-direct-ip",
+            Remarks = "Russian IPs direct",
+            OutboundTag = Global.DirectTag,
+            Ip = ["geoip:ru"],
+            Enabled = ruDirect
         });
 
         return rules;
@@ -1273,17 +1356,27 @@ public sealed class ColituVpnService
             throw new InvalidOperationException($"VPN local proxy port {socksPort} is not listening.");
         }
 
+        // The probe goes through the local SOCKS port, not the adapter, so both run at once.
+        var tunWatch = Stopwatch.StartNew();
+        var tunReady = Task.FromResult(true);
         if (_config.TunModeItem.EnableTun)
         {
             LogConnection($"TUN mode enabled. autoRoute={_config.TunModeItem.AutoRoute}, strictRoute={_config.TunModeItem.StrictRoute}, stack={_config.TunModeItem.Stack}");
-            if (!await WaitForTunInterfaceAsync())
-            {
-                throw new InvalidOperationException("VPN tunnel adapter or route was not activated.");
-            }
+            tunReady = WaitForTunInterfaceAsync();
         }
 
-        var probe = await ProbeThroughLocalProxyAsync(socksPort, rounds, token);
-        LogConnection($"Traffic verification result={probe.Success}, detail={probe.Detail}, serverId={server?.Id}");
+        // The server refusing our credentials will not change in a second round.
+        var probe = await ProbeThroughLocalProxyAsync(socksPort, rounds, token,
+            () => _lastCoreMessage?.Contains("authentication failed", StringComparison.OrdinalIgnoreCase) == true);
+        if (!await tunReady)
+        {
+            throw new InvalidOperationException("VPN tunnel adapter or route was not activated.");
+        }
+        if (_config.TunModeItem.EnableTun)
+        {
+            LogConnection($"TUN adapter up within {tunWatch.ElapsedMilliseconds} ms");
+        }
+        LogConnection($"Traffic verification result={probe.Success}, detail={probe.Detail}, latency={probe.LatencyMs} ms, serverId={server?.Id}");
         if (!probe.Success)
         {
             LogConnection("Traffic probe failed after the VPN core became ready.");
@@ -1295,7 +1388,7 @@ public sealed class ColituVpnService
     /// Fetches small "connectivity check" pages through the tunnel, all at once,
     /// and succeeds on the first answer. Two rounds of at most seven seconds.
     /// </summary>
-    private static async Task<ColituTrafficProbeResult> ProbeThroughLocalProxyAsync(int port, int rounds = 2, CancellationToken token = default)
+    private static async Task<ColituTrafficProbeResult> ProbeThroughLocalProxyAsync(int port, int rounds = 2, CancellationToken token = default, Func<bool>? giveUp = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -1332,6 +1425,10 @@ public sealed class ColituVpnService
             token.ThrowIfCancellationRequested();
             if (round < rounds)
             {
+                if (giveUp?.Invoke() == true)
+                {
+                    break;
+                }
                 await Task.Delay(800, token);
             }
         }
@@ -1381,10 +1478,10 @@ public sealed class ColituVpnService
 
     private static async Task<bool> WaitForTunInterfaceAsync()
     {
-        for (var i = 0; i < 8; i++)
+        for (var i = 0; i < 40; i++)
         {
             if (HasActiveTunInterface()) return true;
-            await Task.Delay(500);
+            await Task.Delay(200);
         }
 
         return false;
@@ -1411,6 +1508,10 @@ public sealed class ColituVpnService
         if (line != null)
         {
             _lastCoreMessage = line;
+            if (line.Contains("authentication failed", StringComparison.OrdinalIgnoreCase))
+            {
+                _credentialsRefused = true;
+            }
             LogConnection($"core notify={notify}: {line}");
             LastError = notify && Status == ColituVpnStatus.Error ? line : LastError;
         }
@@ -1516,6 +1617,10 @@ public sealed class ColituVpnService
 
     private void SetStatus(ColituVpnStatus status)
     {
+        if (status != Status && status is ColituVpnStatus.Connected or ColituVpnStatus.Disconnected or ColituVpnStatus.Error)
+        {
+            ResetDirectConnections();
+        }
         Status = status;
         _session = _session with { Status = status, ConnectedAt = ConnectedAt };
         SaveState();

@@ -14,7 +14,7 @@ system proxy, TUN, routing and DNS. It shares that core layer with the
 | | |
 |---|---|
 | App | `Colitu VPN` (`/opt/colitu-vpn/ColituVPN`, launcher `colitu-vpn`), Avalonia on .NET 10 |
-| Version | `1.0.0` (`src/ColituVPN/ColituVPN.csproj`) |
+| Version | `1.1.0` (`src/ColituVPN/ColituVPN.csproj`) |
 | OS | Debian/Ubuntu/Mint (`.deb`), Fedora/RHEL/openSUSE (`.rpm`), any distribution (`.tar.gz`); x64 and arm64 |
 | Languages | Russian, English, Turkish |
 | License | [GPL-3.0](LICENSE) |
@@ -46,6 +46,11 @@ system proxy, TUN, routing and DNS. It shares that core layer with the
   reached. A root watcher removes the rules as soon as the app exits, so a crash
   never leaves the computer offline.
 - **Ad blocking** (optional): DNS through Colitu's ad-blocking servers, the same as on the phones and Windows.
+- **Russian sites without turning off the VPN.** Russian sites and apps (banks,
+  Gosuslugi, marketplaces) go out directly with the user's own address, as on
+  the phones and Windows; through the Russian server they stay in the tunnel.
+  Xray uses the core bundle's `geosite.dat`/`geoip.dat`, sing-box the rule sets
+  in `srss-dosyalari/`, which ship in the packages because GitHub is blocked in Russia.
 - **One window for everything:** sign-in and registration, e-mail
   verification, password reset, locations with live pings, plan, account and
   devices, and live support with attachments.

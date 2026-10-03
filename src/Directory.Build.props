@@ -28,5 +28,8 @@
         <UseSystemResourceKeys>true</UseSystemResourceKeys>
         <PublishSingleFile>true</PublishSingleFile>
         <PublishReadyToRun>false</PublishReadyToRun>
+        <!-- Stack traces in logs (and in logs attached to support requests) show src/... instead of
+             the build machine's folder. -->
+        <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))=src/</PathMap>
     </PropertyGroup>
 </Project>

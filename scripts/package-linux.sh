@@ -42,6 +42,13 @@ rsync -a "$CORE_BIN/" "$APP/bin/"
 rm -rf "$APP/bin/mihomo" "$APP/bin/hysteria" "$APP/bin/naiveproxy" "$APP/bin/tuic" "$APP/bin/juicity" "$APP/bin/brook" "$APP/bin/shadowquic" 2>/dev/null || true
 [[ -x "$APP/bin/xray/xray" || -f "$APP/bin/xray/xray" ]] || { echo "xray missing from the bundle" >&2; exit 1; }
 [[ -f "$APP/bin/sing_box/sing-box" ]] || { echo "sing-box missing from the bundle" >&2; exit 1; }
+# Russian sites direct: Xray uses the bundle's geosite.dat/geoip.dat, sing-box these rule sets
+# (it would otherwise download them from GitHub, which is blocked in Russia).
+mkdir -p "$APP/bin/srss"
+install -m 0644 "$ROOT"/srss-dosyalari/*.srs "$APP/bin/srss/"
+for f in geosite.dat geoip.dat srss/geosite-category-ru.srs srss/geoip-ru.srs; do
+  [[ -s "$APP/bin/$f" ]] || { echo "bin/$f missing" >&2; exit 1; }
+done
 
 # ── Permissions ─────────────────────────────────────────────────────────
 find "$APP" -type d -exec chmod 0755 {} +
