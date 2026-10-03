@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Process = System.Diagnostics.Process;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -90,7 +91,9 @@ public sealed class ColituUpdateService
             var remoteName = payload.VersionName ?? remoteCode.ToString(CultureInfo.InvariantCulture);
             if (!IsRemoteVersionNewer(remoteName, remoteCode)) return null;
 
-            var kind = InstalledPackageKind();
+            // The signed manifest carries the x64 packages only: on any other architecture apt/dnf
+            // would refuse them, so the update opens the download page instead.
+            var kind = RuntimeInformation.OSArchitecture == Architecture.X64 ? InstalledPackageKind() : null;
             var package = kind == "deb" ? payload.Deb : kind == "rpm" ? payload.Rpm : null;
             if (!ignoreAttemptCache && WasRecentlyAttempted(remoteCode, package?.Url, package?.Sha256))
             {
