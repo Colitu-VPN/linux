@@ -321,7 +321,7 @@ public sealed class Loc : INotifyPropertyChanged
         ["settings.saved"] = ["Сохранено", "Kaydedildi", "Saved"],
         ["settings.reconnectHint"] = ["Изменения применятся при следующем подключении.", "Değişiklik bir sonraki bağlantıda uygulanır.", "Changes apply the next time you connect."],
         ["about.openSource"] = ["Открытый исходный код", "Açık kaynak", "Open source"],
-        ["about.openSourceHint"] = ["Colitu для Linux распространяется под лицензией GPL-3.0. Код открыт на GitHub: github.com/colitu/colitu-linux", "Colitu Linux uygulaması GPL-3.0 lisanslıdır. Kaynak kodu GitHub'da: github.com/colitu/colitu-linux", "Colitu for Linux is licensed under GPL-3.0. The source code is on GitHub: github.com/colitu/colitu-linux"],
+        ["about.openSourceHint"] = ["Colitu для Linux распространяется под лицензией GPL-3.0. Код открыт на GitHub: github.com/colitu/linux", "Colitu Linux uygulaması GPL-3.0 lisanslıdır. Kaynak kodu GitHub'da: github.com/colitu/linux", "Colitu for Linux is licensed under GPL-3.0. The source code is on GitHub: github.com/colitu/linux"],
         ["about.viewSource"] = ["Открыть на GitHub", "GitHub'da aç", "View on GitHub"],
         ["about.credits"] = ["Основано на v2rayN (GPL-3.0), Xray-core (MPL-2.0) и sing-box (GPL-3.0).", "v2rayN (GPL-3.0), Xray-core (MPL-2.0) ve sing-box (GPL-3.0) üzerine kuruludur.", "Built on v2rayN (GPL-3.0), Xray-core (MPL-2.0) and sing-box (GPL-3.0)."],
         ["brand.credit"] = ["Colitu — продукт компании {brand}.", "Colitu bir {brand} ürünüdür.", "Colitu is a {brand} product."],
