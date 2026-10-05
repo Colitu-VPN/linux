@@ -9,6 +9,26 @@ namespace v2rayN.Desktop.Services;
 /// </summary>
 public static class ColituShell
 {
+    private static readonly string[] SystemDirectories = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+
+    /// <summary>
+    /// Absolute path of a system program (sudo, pkexec, apt-get, xdg-open...). Never looked
+    /// up through PATH: a user-writable directory early in PATH (~/.local/bin) could otherwise
+    /// put a fake sudo in front of the one that receives the administrator password.
+    /// </summary>
+    public static string SystemBinary(string name)
+    {
+        foreach (var directory in SystemDirectories)
+        {
+            var path = $"{directory}/{name}";
+            if (File.Exists(path))
+            {
+                return path;
+            }
+        }
+        return $"/usr/bin/{name}";
+    }
+
     /// <summary>True for absolute https:// links (and mailto: when <paramref name="allowMail"/>).</summary>
     internal static bool IsSafeLink(string? url, bool allowMail = true)
     {
@@ -42,7 +62,7 @@ public static class ColituShell
         var full = Path.GetFullPath(path);
         var allowed = new[] { Utils.StartupPath(), ColituSupportService.DownloadFolder }
             .Select(Path.GetFullPath)
-            .Any(root => full.StartsWith(root, StringComparison.Ordinal));
+            .Any(root => full == root || full.StartsWith(root.TrimEnd('/') + "/", StringComparison.Ordinal));
         if (!allowed || !Directory.Exists(full))
         {
             return false;
@@ -54,7 +74,7 @@ public static class ColituShell
     {
         try
         {
-            var startInfo = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
+            var startInfo = new ProcessStartInfo(SystemBinary("xdg-open")) { UseShellExecute = false };
             startInfo.ArgumentList.Add(target);
             using var _ = Process.Start(startInfo);
             return true;

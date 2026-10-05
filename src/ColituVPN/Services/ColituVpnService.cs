@@ -505,6 +505,17 @@ public sealed class ColituVpnService
         {
             // Best effort.
         }
+        try
+        {
+            // The imported profiles hold this account's server credentials in plain text
+            // (v2rayN database); the encrypted cache above is pointless if they stay.
+            await ConfigHandler.RemoveServersViaSubid(_config, ColituSubId, false);
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituVpnService.ForgetAccount profiles", ex);
+        }
+        AppManager.Instance.LinuxSudoPwd = "";
         _lastServers = [];
         SelectedServer = null;
         ConnectedServer = null;
@@ -555,6 +566,14 @@ public sealed class ColituVpnService
         if (!CoreManager.Instance.IsCoreRunning)
         {
             LogConnection("VPN core stopped unexpectedly; reconnecting");
+            await OnTunnelLostAsync();
+            return;
+        }
+        // In TUN mode with Xray the adapter belongs to a separate root sing-box. If only that
+        // one dies, the local SOCKS probe below still passes while apps bypass the tunnel.
+        if (CoreManager.Instance.PreCoreExited)
+        {
+            LogConnection("TUN core stopped unexpectedly; reconnecting");
             await OnTunnelLostAsync();
             return;
         }
@@ -1551,6 +1570,7 @@ public sealed class ColituVpnService
         if (message.Contains("core executable", StringComparison.OrdinalIgnoreCase)) return loc["err.core"];
         if (message.Contains("adapter or route", StringComparison.OrdinalIgnoreCase)) return loc["err.tun"];
         if (message.Contains("still in use", StringComparison.OrdinalIgnoreCase)) return loc["err.port"];
+        if (message.Contains("System proxy could not", StringComparison.OrdinalIgnoreCase)) return loc["err.proxy"];
         if (message.Contains("Server config", StringComparison.OrdinalIgnoreCase) || message.Contains("transport supported", StringComparison.OrdinalIgnoreCase)) return loc["err.noServers"];
         return loc["err.generic"];
     }

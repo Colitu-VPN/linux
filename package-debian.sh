@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Legacy upstream packaging script. Colitu releases are built by scripts/package-linux.sh
+# (release-linux.yml): that one adds the Russian rule sets, pins and checks the cores and
+# installs on older distributions. Packages from this script are not published.
+echo "WARNING: legacy script; release packages come from scripts/package-linux.sh" >&2
+
 VERSION_ARG=""
 WITH_CORE="both"
 FORCE_NETCORE=0

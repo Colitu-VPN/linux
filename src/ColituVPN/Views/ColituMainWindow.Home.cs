@@ -29,12 +29,12 @@ public partial class ColituMainWindow
             }
         };
         ConnectButton.Click += async (_, _) => await ToggleConnectionAsync();
-        UnblockButton.Click += async (_, _) =>
+        UnblockButton.Click += async (_, _) => await GuardAsync("Unblock", async () =>
         {
             await _vpn.DisconnectAsync();
             ApplyStatus();
             ShowToast(Loc.I["info.disconnected"]);
-        };
+        });
         LocationCard.PointerReleased += (_, _) => Navigate("locations");
         ChangeServerButton.Click += (_, _) => Navigate("locations");
         PlanCtaButton.Click += (_, _) => Navigate("plan");

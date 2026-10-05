@@ -20,6 +20,9 @@ public class CoreManager
 
     public bool IsCoreRunning => _processService is { HasExited: false };
     public bool IsPreCoreRunning => _processPreService is { HasExited: false };
+
+    /// <summary>A pre-core (the root sing-box holding the TUN for Xray) was started and has died since.</summary>
+    public bool PreCoreExited => _processPreService is { HasExited: true };
     public string? CoreProcessFileName => _processService?.FileName;
     public string? CoreProcessArguments => _processService?.Arguments;
 
@@ -35,7 +38,24 @@ public class CoreManager
             var toPath = Utils.GetBinPath("");
             if (fromPath != toPath)
             {
-                FileUtils.CopyDirectory(fromPath, toPath, true, false);
+                // A package upgrade ships new cores and rule files: copy them over the
+                // previous version's copy once, otherwise only new file names would arrive.
+                var stampPath = Path.Combine(toPath, ".package-version");
+                var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "";
+                var upgraded = !File.Exists(stampPath) || File.ReadAllText(stampPath).Trim() != version;
+                try
+                {
+                    FileUtils.CopyDirectory(fromPath, toPath, true, upgraded);
+                    if (upgraded)
+                    {
+                        File.WriteAllText(stampPath, version);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // e.g. a core left running by a crashed session ("text file busy"): retried next start.
+                    Logging.SaveLog("CoreManager.Init copy bin", ex);
+                }
             }
         }
 

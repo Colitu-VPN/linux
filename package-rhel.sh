@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Legacy upstream packaging script. Colitu releases are built by scripts/package-linux.sh
+# (release-linux.yml): that one adds the Russian rule sets, pins and checks the cores and
+# installs on older distributions. Packages from this script are not published.
+echo "WARNING: legacy script; release packages come from scripts/package-linux.sh" >&2
+
 VERSION_ARG=""
 WITH_CORE="both"
 FORCE_NETCORE=0
@@ -482,7 +487,7 @@ Release:        1%{?dist}
 Summary:        Colitu VPN desktop client for Linux
 License:        GPL-3.0-only
 URL:            https://colitu.com
-BugURL:         https://github.com/cyberlexs/colitu-linux/issues
+BugURL:         https://github.com/colitu/colitu-linux/issues
 ExclusiveArch:  aarch64 x86_64
 Source0:        __PKGROOT__.tar.gz
 

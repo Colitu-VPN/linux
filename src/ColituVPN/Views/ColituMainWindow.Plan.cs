@@ -13,7 +13,7 @@ public partial class ColituMainWindow
     private const string AccountPortalUrl = "https://app.colitu.com";
 
     /// <summary>The Linux app is published under GPL-3.0; linked from About.</summary>
-    private const string SourceCodeUrl = "https://github.com/cyberlexs/colitu-linux";
+    private const string SourceCodeUrl = "https://github.com/colitu/colitu-linux";
 
     private bool _refreshingPlan;
 

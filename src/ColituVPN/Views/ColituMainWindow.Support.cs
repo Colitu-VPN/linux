@@ -41,8 +41,8 @@ public partial class ColituMainWindow
                 ShowSupportPane(SupportPlaceholder);
             }
         };
-        SupportAttachNewButton.Click += async (_, _) => await PickSupportFilesAsync(_supportNewFiles, SupportNewFiles);
-        SupportAttachReplyButton.Click += async (_, _) => await PickSupportFilesAsync(_supportReplyFiles, SupportReplyFiles);
+        SupportAttachNewButton.Click += async (_, _) => await GuardAsync("AttachNew", () => PickSupportFilesAsync(_supportNewFiles, SupportNewFiles));
+        SupportAttachReplyButton.Click += async (_, _) => await GuardAsync("AttachReply", () => PickSupportFilesAsync(_supportReplyFiles, SupportReplyFiles));
         SupportCreateButton.Click += async (_, _) => await CreateSupportRequestAsync();
         SupportSendButton.Click += async (_, _) => await SendSupportReplyAsync();
         SupportList.SelectionChanged += async (_, _) =>

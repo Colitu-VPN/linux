@@ -39,7 +39,7 @@ public partial class ColituMainWindow : Window
             ShowToast(Loc.I[key], key.StartsWith("err", StringComparison.Ordinal));
             ApplyStatus();
         });
-        _auth.SessionExpired += _ => Dispatcher.UIThread.Post(async () => await OnSessionExpiredAsync());
+        _auth.SessionExpired += _ => Dispatcher.UIThread.Post(async () => await GuardAsync("SessionExpired", OnSessionExpiredAsync));
         _updater.UpdateAvailable += info => Dispatcher.UIThread.Post(() => ShowUpdate(info));
 
         _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -385,11 +385,29 @@ public partial class ColituMainWindow : Window
         }
 
         // Rebuilding the selectors inside their own change event would recurse; defer it.
-        Dispatcher.UIThread.Post(async () =>
+        Dispatcher.UIThread.Post(async () => await GuardAsync("Language", async () =>
         {
             ApplyLanguage(language);
             await _vpn.UpdatePreferencesAsync(_vpn.Preferences with { Language = language });
-        }, DispatcherPriority.Background);
+        }), DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Runs an event handler's async work. An exception escaping an async void handler
+    /// would end the whole app (and leave a root core or the system proxy behind);
+    /// here it is logged and shown as a short error instead.
+    /// </summary>
+    private async Task GuardAsync(string name, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog($"ColituMainWindow.{name}", ex);
+            ShowToast(Loc.I["err.generic"], true);
+        }
     }
 
     // ── Toast and notifications ────────────────────────────────────────────
@@ -420,7 +438,7 @@ public partial class ColituMainWindow : Window
     {
         try
         {
-            var startInfo = new ProcessStartInfo("notify-send") { UseShellExecute = false };
+            var startInfo = new ProcessStartInfo(ColituShell.SystemBinary("notify-send")) { UseShellExecute = false };
             foreach (var arg in new[] { "--app-name=Colitu VPN", "--icon=colitu-vpn", "Colitu VPN", text })
             {
                 startInfo.ArgumentList.Add(arg);
@@ -536,7 +554,7 @@ public partial class ColituMainWindow : Window
         try
         {
             _trayConnectItem = new NativeMenuItem(Loc.I["tray.connect"]);
-            _trayConnectItem.Click += async (_, _) => await TrayConnectAsync();
+            _trayConnectItem.Click += async (_, _) => await GuardAsync("TrayConnect", TrayConnectAsync);
             var open = new NativeMenuItem(Loc.I["tray.open"]);
             open.Click += (_, _) => ShowFromTray();
             var exit = new NativeMenuItem(Loc.I["tray.exit"]);

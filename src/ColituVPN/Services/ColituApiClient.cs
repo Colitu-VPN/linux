@@ -361,7 +361,8 @@ public static class ColituShareLinkBuilder
         if (payload.ValueKind != JsonValueKind.Object
             || !payload.TryGetProperty("schema_version", out var schema)
             || schema.ValueKind != JsonValueKind.Number
-            || schema.GetInt32() != 1)
+            || !schema.TryGetInt32(out var schemaVersion)
+            || schemaVersion != 1)
         {
             return null;
         }
@@ -373,7 +374,13 @@ public static class ColituShareLinkBuilder
         var security = Obj(payload, "security");
         var host = Str(endpoint, "host");
         var port = endpoint is { } e && e.TryGetProperty("port", out var portValue) && portValue.TryGetInt32(out var parsed) ? parsed : 0;
-        if (host.IsNullOrEmpty() || port is < 1 or > 65535)
+        // The host goes into a share link unescaped: only a real host name or IP address,
+        // never one carrying '?', '#', '@', '/' or a line break that could add parameters.
+        if (host.IsNullOrEmpty() || port is < 1 or > 65535 || Uri.CheckHostName(host) == UriHostNameType.Unknown)
+        {
+            return null;
+        }
+        if (addressOverride != null && Uri.CheckHostName(addressOverride) is not (UriHostNameType.IPv4 or UriHostNameType.IPv6))
         {
             return null;
         }

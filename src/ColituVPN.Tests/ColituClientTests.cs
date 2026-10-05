@@ -76,11 +76,11 @@ public class ColituClientTests
     [Fact]
     public void RealityPayload_BecomesAVlessLinkWithVision()
     {
-        var payload = Payload("""{"schema_version":1,"protocol":"vless-reality","endpoint":{"host":"nl.colitu.net","port":443},"credentials":{"uuid":"0b2c"},"transport":{"type":"tcp"},"security":{"type":"reality","server_name":"www.example.com","public_key":"PBK","short_id":"ab","fingerprint":"chrome"}}""");
+        var payload = Payload("""{"schema_version":1,"protocol":"vless-reality","endpoint":{"host":"nl.example.net","port":443},"credentials":{"uuid":"0b2c"},"transport":{"type":"tcp"},"security":{"type":"reality","server_name":"www.example.com","public_key":"PBK","short_id":"ab","fingerprint":"chrome"}}""");
 
         var link = ColituShareLinkBuilder.Build(payload, "x");
 
-        link.Should().StartWith("vless://0b2c@nl.colitu.net:443?")
+        link.Should().StartWith("vless://0b2c@nl.example.net:443?")
             .And.Contain("flow=xtls-rprx-vision")
             .And.Contain("security=reality")
             .And.Contain("pbk=PBK")

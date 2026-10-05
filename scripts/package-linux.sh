@@ -6,7 +6,9 @@
 # <publish-dir> is the output of
 #   dotnet publish src/ColituVPN -c Release -r linux-<arch> -p:SelfContained=true -p:Version=<version>
 # The Xray and sing-box cores (with their rule files) are taken from the prebuilt
-# core bundle in 2dust/v2rayN-core-bin. Needs: curl, unzip, rsync, dpkg-deb, rpmbuild.
+# core bundle in 2dust/v2rayN-core-bin, pinned to one commit and checked against
+# its SHA-256 (the cores run as root in TUN mode). Update CORE_COMMIT and both
+# hashes together. Needs: curl, unzip, rsync, dpkg-deb, rpmbuild, sha256sum.
 set -euo pipefail
 
 VERSION="${1:?version}"
@@ -15,9 +17,13 @@ PUBLISH="${3:?publish dir}"
 OUT="${4:?out dir}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Xray v26.9.30, sing-box v1.14.2, rule files of 2026-10-04.
+CORE_COMMIT="f75f07b3b2906909e6bd2961928e7debd2d75d2a"
 case "$ARCH" in
-  x64)   DEB_ARCH=amd64; RPM_ARCH=x86_64;  CORE_ZIP=v2rayN-linux-64.zip ;;
-  arm64) DEB_ARCH=arm64; RPM_ARCH=aarch64; CORE_ZIP=v2rayN-linux-arm64.zip ;;
+  x64)   DEB_ARCH=amd64; RPM_ARCH=x86_64;  CORE_ZIP=v2rayN-linux-64.zip
+         CORE_SHA256=41734f3d7137a6eb72a8e52d2e63dacf8ef0f1b4d6c6b142c05eb8c81ef9cc04 ;;
+  arm64) DEB_ARCH=arm64; RPM_ARCH=aarch64; CORE_ZIP=v2rayN-linux-arm64.zip
+         CORE_SHA256=0dcb239900953954c3ac37e4c65019ef63d8af75c100348a486a5cca1eef5c10 ;;
   *) echo "unknown arch $ARCH" >&2; exit 1 ;;
 esac
 
@@ -30,8 +36,9 @@ mkdir -p "$APP"
 rsync -a --exclude '*.pdb' "$PUBLISH/" "$APP/"
 
 # ── Cores and rule files ────────────────────────────────────────────────
-echo "[+] Cores from 2dust/v2rayN-core-bin/$CORE_ZIP"
-curl -fsSL "https://raw.githubusercontent.com/2dust/v2rayN-core-bin/refs/heads/master/$CORE_ZIP" -o "$WORK/core.zip"
+echo "[+] Cores from 2dust/v2rayN-core-bin@${CORE_COMMIT:0:12}/$CORE_ZIP"
+curl -fsSL "https://raw.githubusercontent.com/2dust/v2rayN-core-bin/$CORE_COMMIT/$CORE_ZIP" -o "$WORK/core.zip"
+echo "$CORE_SHA256  $WORK/core.zip" | sha256sum -c - || { echo "core bundle checksum mismatch" >&2; exit 1; }
 mkdir -p "$WORK/core"
 unzip -q "$WORK/core.zip" -d "$WORK/core"
 CORE_BIN="$(find "$WORK/core" -maxdepth 3 -type d -name bin | head -n1)"
@@ -107,7 +114,7 @@ Homepage: https://colitu.com
 Section: net
 Priority: optional
 Installed-Size: ${SIZE_KB}
-Depends: libc6, libgcc-s1, libstdc++6, zlib1g, libfontconfig1, libicu-dev | libicu74 | libicu72 | libicu76, ca-certificates
+Depends: libc6, libgcc-s1, libstdc++6, zlib1g, libfontconfig1, libssl3t64 | libssl3, libx11-6, libice6, libsm6, libicu78 | libicu77 | libicu76 | libicu74 | libicu72 | libicu70 | libicu-dev, ca-certificates
 Recommends: sudo, nftables, pkexec | policykit-1, libnotify-bin, xdg-utils
 Description: Colitu VPN desktop client for Linux
  Sign in with your Colitu account and connect with one click. Proxy and
@@ -122,7 +129,18 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f 
 exit 0
 EOF
 cp "$DEB/DEBIAN/postinst" "$DEB/DEBIAN/postrm"
-chmod 0755 "$DEB/DEBIAN/postinst" "$DEB/DEBIAN/postrm"
+# Removing the app (not upgrading) also removes a kill-switch table and its watcher
+# that a crashed or killed app may have left behind.
+cat > "$DEB/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+  command -v nft >/dev/null 2>&1 && nft delete table inet colitu_killswitch 2>/dev/null || true
+  if [ -r /run/colitu-killswitch.watch ]; then kill "$(cat /run/colitu-killswitch.watch)" 2>/dev/null || true; rm -f /run/colitu-killswitch.watch; fi
+fi
+exit 0
+EOF
+chmod 0755 "$DEB/DEBIAN/postinst" "$DEB/DEBIAN/postrm" "$DEB/DEBIAN/prerm"
 DEB_OUT="$OUT/colitu-vpn_${VERSION}_${DEB_ARCH}.deb"
 dpkg-deb --root-owner-group -Zxz --build "$DEB" "$DEB_OUT"
 echo "[+] $DEB_OUT"
@@ -160,6 +178,12 @@ cp -a ${STAGE}/. %{buildroot}/
 %post
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || :
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f /usr/share/icons/hicolor || :
+
+%preun
+if [ \$1 -eq 0 ]; then
+  command -v nft >/dev/null 2>&1 && nft delete table inet colitu_killswitch 2>/dev/null || :
+  if [ -r /run/colitu-killswitch.watch ]; then kill "\$(cat /run/colitu-killswitch.watch)" 2>/dev/null || :; rm -f /run/colitu-killswitch.watch; fi
+fi
 
 %postun
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || :

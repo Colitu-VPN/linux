@@ -29,7 +29,7 @@ public partial class ColituMainWindow
         ShowPasswordButton.Click += (_, _) => TogglePasswordVisibility();
         ForgotButton.Click += (_, _) => ShowReset(EmailBox.Text?.Trim() ?? "");
         TermsLink.Click += (_, _) => OpenUrl(LocalizedPath("/legal/terms"));
-        SignOutButton.Click += async (_, _) => await SignOutAsync();
+        SignOutButton.Click += async (_, _) => await GuardAsync("SignOut", SignOutAsync);
         ApplyAuthMode();
     }
 

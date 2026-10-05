@@ -1,7 +1,7 @@
 param(
     # Colitu for Linux version of the packages, e.g. 1.0.0.
     [Parameter(Mandatory = $true)][string]$Version,
-    # The amd64 .deb and the x86_64 .rpm built by package-debian.sh / package-rhel.sh.
+    # The amd64 .deb and the x86_64 .rpm of the GitHub release (scripts/package-linux.sh, release-linux.yml).
     [Parameter(Mandatory = $true)][string]$DebPath,
     [Parameter(Mandatory = $true)][string]$RpmPath,
     # ECDSA P-256 private key (PKCS#8 PEM) that signs latest.json: the same release key as the
@@ -21,7 +21,9 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 foreach ($path in @($DebPath, $RpmPath, $SigningKeyPath)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Not found: $path" }
 }
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3" }
+# Minor and patch stay single digits: the version code is major*100 + minor*10 + patch,
+# so 1.10.0 would get the same code as 2.0.0.
+if ($Version -notmatch '^\d+\.\d\.\d$') { throw "Version must look like 1.2.3 (one-digit minor and patch)" }
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $debName = "colitu-vpn_${Version}_amd64.deb"

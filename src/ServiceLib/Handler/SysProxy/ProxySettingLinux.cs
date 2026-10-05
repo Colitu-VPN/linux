@@ -8,7 +8,12 @@ public static class ProxySettingLinux
     public static async Task SetProxy(string host, int port, string exceptions)
     {
         List<string> args = ["manual", host, port.ToString(), exceptions];
-        await ExecCmd(args);
+        // The script exits 1 on desktops it can't configure (Sway, Hyprland, bare i3...).
+        // Reporting success there would show "connected" while every app goes direct.
+        if (!await ExecCmd(args))
+        {
+            throw new InvalidOperationException("System proxy could not be applied on this desktop.");
+        }
     }
 
     public static async Task UnsetProxy()
@@ -17,16 +22,16 @@ public static class ProxySettingLinux
         await ExecCmd(args);
     }
 
-    private static async Task ExecCmd(List<string> args)
+    private static async Task<bool> ExecCmd(List<string> args)
     {
         var customSystemProxyScriptPath = AppManager.Instance.Config.SystemProxyItem?.CustomSystemProxyScriptPath;
         var fileName = (customSystemProxyScriptPath.IsNotEmpty() && File.Exists(customSystemProxyScriptPath))
             ? customSystemProxyScriptPath
-            : await FileUtils.CreateLinuxShellFile(_proxySetFileName, EmbedUtils.GetEmbedText(Global.ProxySetLinuxShellFileName), false);
+            : await FileUtils.CreateLinuxShellFile(_proxySetFileName, EmbedUtils.GetEmbedText(Global.ProxySetLinuxShellFileName), true);
 
         // TODO: temporarily notify which script is being used
         NoticeManager.Instance.SendMessage(fileName);
 
-        await Utils.GetCliWrapOutput(fileName, args);
+        return await Utils.GetCliWrapOutput(fileName, args) != null;
     }
 }

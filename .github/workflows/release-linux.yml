@@ -13,8 +13,9 @@ on:
         description: Release tag (e.g. v1.0.0)
         required: true
 
+# Read-only by default; only the release job (no build tools, no restore) can write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -29,11 +30,12 @@ jobs:
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
 
@@ -41,7 +43,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rpm rsync unzip
 
       - name: Version
-        run: echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+        # x.y.z only: rpm rejects '-' in Version and dpkg would sort a "-rc" after the release.
+        run: |
+          VERSION="${TAG#v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must look like v1.2.3"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Test
         run: dotnet test --project src/ColituVPN.Tests -c Release
@@ -51,15 +57,18 @@ jobs:
           # Colitu's ad-blocking DNS nodes are build-time secrets, never in the source.
           # MSBuild reads the comma-separated list from the environment (-p: would split it).
           ColituAdBlockDoh: ${{ secrets.COLITU_ADBLOCK_DOH }}
+          ARCH: ${{ matrix.arch }}
         run: |
           case "$ColituAdBlockDoh" in https://*) ;; *) echo "::error::COLITU_ADBLOCK_DOH secret is missing"; exit 1 ;; esac
-          dotnet publish src/ColituVPN/ColituVPN.csproj -c Release -r linux-${{ matrix.arch }} \
+          dotnet publish src/ColituVPN/ColituVPN.csproj -c Release -r "linux-$ARCH" \
             -p:SelfContained=true -p:PublishSingleFile=false -p:Version="$VERSION" -o publish
 
       - name: Package
-        run: bash scripts/package-linux.sh "$VERSION" ${{ matrix.arch }} publish dist
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: bash scripts/package-linux.sh "$VERSION" "$ARCH" publish dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packages-${{ matrix.arch }}
           path: dist/*
@@ -68,10 +77,12 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: packages-*
           merge-multiple: true
@@ -83,12 +94,12 @@ jobs:
           sha256sum -- *.deb *.rpm *.tar.gz | sort -k2 > SHA256SUMS
           cat SHA256SUMS
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.TAG }}
           name: Colitu VPN for Linux ${{ env.TAG }}
           prerelease: true
           files: dist/*
           body: |
-            Colitu VPN for Linux. Install on Debian/Ubuntu/Mint with the `.deb`, on Fedora/RHEL/openSUSE with the `.rpm`, or unpack the `.tar.gz` on any distribution.
+            Colitu VPN for Linux. Install on Debian/Ubuntu/Mint with the `.deb`, on Fedora/RHEL with the `.rpm`, or unpack the `.tar.gz` on any distribution.
             Guide: https://colitu.com/download/linux · Checksums: `SHA256SUMS`.

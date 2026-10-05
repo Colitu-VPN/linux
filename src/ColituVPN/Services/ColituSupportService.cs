@@ -73,7 +73,9 @@ public sealed partial class ColituSupportService
         var folder = DownloadFolder;
         Directory.CreateDirectory(folder);
         var name = string.Concat(Path.GetFileName(attachment.FileName ?? "file").Split(Path.GetInvalidFileNameChars()));
-        var path = Path.Combine(folder, $"{attachment.Id[..Math.Min(8, attachment.Id.Length)]}-{(name.Length == 0 ? "file" : name)}");
+        // The id comes from the server: only letters, digits and '-' reach the file name.
+        var idPart = new string(attachment.Id.Where(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-').Take(8).ToArray());
+        var path = Path.Combine(folder, $"{(idPart.Length == 0 ? "att" : idPart)}-{(name.Length == 0 ? "file" : name)}");
         if (response.Content.Headers.ContentLength > MaxDownloadBytes)
         {
             throw new InvalidOperationException("Attachment is too large.");
@@ -101,7 +103,24 @@ public sealed partial class ColituSupportService
     public async Task<byte[]> DownloadBytesAsync(string attachmentId)
     {
         using var response = await _auth.SendAuthorizedRequestAsync(() => new HttpRequestMessage(HttpMethod.Get, _auth.ApiUri($"/support/attachments/{Uri.EscapeDataString(attachmentId)}")));
-        return await response.Content.ReadAsByteArrayAsync();
+        if (response.Content.Headers.ContentLength > MaxDownloadBytes)
+        {
+            throw new InvalidOperationException("Attachment is too large.");
+        }
+        // Same limit as DownloadAsync, enforced while reading: the size header is not trusted.
+        await using var source = await response.Content.ReadAsStreamAsync();
+        using var memory = new MemoryStream();
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            if (memory.Length + read > MaxDownloadBytes)
+            {
+                throw new InvalidOperationException("Attachment is too large.");
+            }
+            memory.Write(buffer, 0, read);
+        }
+        return memory.ToArray();
     }
 
     /// <summary>Returns a localized reason when a file cannot be attached, otherwise null.</summary>
@@ -156,7 +175,7 @@ public sealed partial class ColituSupportService
         var errors = new List<string>();
         if (!string.IsNullOrWhiteSpace(vpn.LastError))
         {
-            errors.Add(vpn.LastError!);
+            errors.Add(Redact(vpn.LastError!));
         }
         var server = vpn.ConnectedServer;
         return new ColituSupportDiagnostics
@@ -229,17 +248,31 @@ public sealed partial class ColituSupportService
         text = ColituLogPrivacy.StripTraffic(text);
         text = ShareLinkSecret().Replace(text, "$1***@");
         text = BearerToken().Replace(text, "Bearer ***");
+        text = UrlCredentials().Replace(text, "$1***@");
+        text = QuerySecret().Replace(text, "$1***");
+        text = Email().Replace(text, "***@***");
         return JsonSecret().Replace(text, "$1\"***\"");
     }
 
-    [GeneratedRegex(@"((?:vless|vmess|trojan|hysteria2|hy2|ss|tuic)://)[^@\s/]+@", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"((?:vless|vmess|trojan|hysteria2|hy2|ss|tuic|socks|socks5)://)[^@\s/]+@", RegexOptions.IgnoreCase)]
     private static partial Regex ShareLinkSecret();
 
     [GeneratedRegex(@"Bearer\s+[A-Za-z0-9\-_.=]+", RegexOptions.IgnoreCase)]
     private static partial Regex BearerToken();
 
-    [GeneratedRegex(@"(""(?:password|uuid|token|access_token|refresh_token|private_key)""\s*:\s*)""[^""]*""", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(""(?:password|uuid|id|auth|auth_str|psk|token|access_token|refresh_token|private_key|privateKey|publicKey|shortId|short_id)""\s*:\s*)""[^""]*""", RegexOptions.IgnoreCase)]
     private static partial Regex JsonSecret();
+
+    /// <summary>user:password@ in http(s) URLs.</summary>
+    [GeneratedRegex(@"(https?://)[^@\s/]+:[^@\s/]*@", RegexOptions.IgnoreCase)]
+    private static partial Regex UrlCredentials();
+
+    /// <summary>token=, key=, password=, pbk=, sid= ... in links and query strings.</summary>
+    [GeneratedRegex(@"(\b(?:password|pass|pwd|token|access_token|refresh_token|key|auth|code|sig|pbk|sid|uuid)=)[^&\s""]+", RegexOptions.IgnoreCase)]
+    private static partial Regex QuerySecret();
+
+    [GeneratedRegex(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")]
+    private static partial Regex Email();
 
     private sealed class Envelope<T>
     {

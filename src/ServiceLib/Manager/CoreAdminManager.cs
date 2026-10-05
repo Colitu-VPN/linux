@@ -33,17 +33,19 @@ public class CoreAdminManager
     {
         StringBuilder sb = new();
         sb.AppendLine("#!/bin/bash");
+        // Absolute sudo: never one found earlier in a user-writable PATH entry.
+        var sudo = SudoPath();
         var cmdLine = $"{fileName.AppendQuotes()} {string.Format(coreInfo.Arguments, Utils.GetBinConfigPath(configPath).AppendQuotes())}";
 
         // Passing environment variables to the sudo command, here it only xray or sing-box.
         if (coreInfo.Environment.Count > 0)
         {
             var envArgs = string.Join(" ", coreInfo.Environment.Where(kv => kv.Value.IsNotEmpty()).Select(kv => $"{kv.Key}={kv.Value.AppendQuotes()}"));
-            sb.AppendLine($"exec sudo -S -- env {envArgs} {cmdLine}");
+            sb.AppendLine($"exec {sudo} -S -- env {envArgs} {cmdLine}");
         }
         else
         {
-            sb.AppendLine($"exec sudo -S -- {cmdLine}");
+            sb.AppendLine($"exec {sudo} -S -- {cmdLine}");
         }
 
         var shFilePath = await FileUtils.CreateLinuxShellFile("run_as_sudo.sh", sb.ToString(), true);
@@ -69,6 +71,8 @@ public class CoreAdminManager
         return procService;
     }
 
+    private static string SudoPath() => File.Exists("/usr/bin/sudo") ? "/usr/bin/sudo" : File.Exists("/bin/sudo") ? "/bin/sudo" : "sudo";
+
     public async Task KillProcessAsLinuxSudo()
     {
         if (_linuxSudoPid < 0)
@@ -79,13 +83,11 @@ public class CoreAdminManager
         try
         {
             var shellFileName = Utils.IsMacOS() ? Global.KillAsSudoOSXShellFileName : Global.KillAsSudoLinuxShellFileName;
-            var shFilePath = await FileUtils.CreateLinuxShellFile("kill_as_sudo.sh", EmbedUtils.GetEmbedText(shellFileName), true);
-            if (shFilePath.Contains(' '))
-            {
-                shFilePath = shFilePath.AppendQuotes();
-            }
-            var arg = new List<string>() { "-c", $"sudo -S {shFilePath} {_linuxSudoPid}" };
-            var result = await Cli.Wrap(Global.LinuxBash)
+            // The script text goes to root's bash straight from the app (bash -c), not through
+            // a file in the user's data folder that anything running as the user could rewrite.
+            var script = EmbedUtils.GetEmbedText(shellFileName).Replace("\r\n", "\n");
+            var arg = new List<string>() { "-S", "-p", "", "--", Global.LinuxBash, "-c", script, "kill_as_sudo", _linuxSudoPid.ToString() };
+            var result = await Cli.Wrap(SudoPath())
                 .WithArguments(arg)
                 .WithStandardInputPipe(PipeSource.FromString(AppManager.Instance.LinuxSudoPwd))
                 .ExecuteBufferedAsync();

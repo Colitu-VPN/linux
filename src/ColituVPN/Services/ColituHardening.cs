@@ -47,8 +47,11 @@ public static class ColituHardening
     {
         try
         {
-            // Only folders the user owns: an install directory under /opt stays as packaged.
-            if (!OperatingSystem.IsWindows() && Directory.Exists(directory) && Utils.HasWritePermission())
+            // Only the user's own data folders (~/.local/share/ColituVPN, or a portable copy in
+            // the home directory). A packaged install under /opt or /usr/lib stays as packaged:
+            // HasWritePermission() looks at the install folder, so it was false for every
+            // packaged install and the data folders kept the umask (0755).
+            if (!OperatingSystem.IsWindows() && Directory.Exists(directory) && IsInHome(directory))
             {
                 File.SetUnixFileMode(directory, OwnerOnlyDirectory);
             }
@@ -57,6 +60,18 @@ public static class ColituHardening
         {
             // Read-only installation folder: nothing to restrict there.
         }
+    }
+
+    private static bool IsInHome(string directory)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrEmpty(home) || home == "/")
+        {
+            return false;
+        }
+        var full = Path.GetFullPath(directory).TrimEnd('/');
+        home = Path.GetFullPath(home).TrimEnd('/');
+        return full.StartsWith(home + "/", StringComparison.Ordinal);
     }
 
     /// <summary>Creates an empty folder that only the current user can read or change.</summary>

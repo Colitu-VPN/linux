@@ -41,6 +41,13 @@ public sealed class ColituAuthService
     private DateTimeOffset? _accessTokenExpiresAt;
 
     /// <summary>
+    /// Bumped by every sign-out. A request or token refresh that started under an older
+    /// session must neither save tokens (the session would come back after sign-out) nor
+    /// expire the session that replaced it (a new sign-in would be wiped).
+    /// </summary>
+    private long _sessionGeneration;
+
+    /// <summary>
     /// Raised when the session can no longer be refreshed (revoked, device removed,
     /// account disabled). The UI must send the user back to the sign-in screen.
     /// </summary>
@@ -526,6 +533,14 @@ public sealed class ColituAuthService
             await RefreshSingleFlightAsync(_accessToken);
         }
 
+        var generation = Interlocked.Read(ref _sessionGeneration);
+        if (string.IsNullOrWhiteSpace(_accessToken) && string.IsNullOrWhiteSpace(_refreshToken))
+        {
+            // Signed out (a poll that was already running): don't send an anonymous request
+            // whose 401 would end in "session expired".
+            throw new ColituApiException(HttpStatusCode.Unauthorized, Loc.I["auth.expired"], "SIGNED_OUT");
+        }
+
         var tokenUsed = _accessToken;
         var request = PrepareAuthorized(requestFactory(), tokenUsed, includeDevice);
         var response = await _httpClient.SendAsync(request, token);
@@ -536,6 +551,10 @@ public sealed class ColituAuthService
 
         response.Dispose();
         var outcome = await RefreshSingleFlightAsync(tokenUsed);
+        if (generation != Interlocked.Read(ref _sessionGeneration))
+        {
+            throw new ColituApiException(HttpStatusCode.Unauthorized, Loc.I["auth.expired"], "SIGNED_OUT");
+        }
         if (outcome == ColituRefreshOutcome.Terminal)
         {
             ExpireSession("SESSION_EXPIRED");
@@ -605,6 +624,7 @@ public sealed class ColituAuthService
     private async Task<ColituRefreshOutcome> RefreshLockedAsync()
     {
         if (string.IsNullOrWhiteSpace(_refreshToken)) return ColituRefreshOutcome.Terminal;
+        var generation = Interlocked.Read(ref _sessionGeneration);
         try
         {
             using var response = await SendClientJsonAsync(HttpMethod.Post, "/auth/refresh", new { refresh_token = _refreshToken }, includeDevice: true);
@@ -620,6 +640,8 @@ public sealed class ColituAuthService
             }
             var tokens = await ReadJsonAsync<ColituTokenDto>(response);
             if (string.IsNullOrWhiteSpace(tokens?.AccessToken)) return ColituRefreshOutcome.Transient;
+            // Signed out while the refresh was in flight: don't bring the session back.
+            if (generation != Interlocked.Read(ref _sessionGeneration)) return ColituRefreshOutcome.Transient;
             SaveTokens(tokens.AccessToken, tokens.RefreshToken ?? _refreshToken!);
             return ColituRefreshOutcome.Success;
         }
@@ -728,6 +750,7 @@ public sealed class ColituAuthService
 
     private void ClearSession()
     {
+        Interlocked.Increment(ref _sessionGeneration);
         _session = new();
         _accessToken = null;
         _refreshToken = null;

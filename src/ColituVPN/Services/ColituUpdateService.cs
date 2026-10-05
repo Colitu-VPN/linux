@@ -28,6 +28,7 @@ public sealed class ColituUpdateService
 
     /// <summary>Directory the packages install to; anything else is a manual installation.</summary>
     public const string PackageInstallDir = "/opt/colitu-vpn";
+    private const string PackageName = "colitu-vpn";
 
     public const string DownloadPageUrl = $"{ColituAuthService.WebBaseUrl}/downloads/linux";
 
@@ -61,11 +62,40 @@ public sealed class ColituUpdateService
         {
             return "deb";
         }
-        if (File.Exists("/usr/bin/rpm"))
+        // Only when rpm itself installed Colitu: a tarball copied to /opt on a Debian system
+        // with the rpm tool present must not be "updated" with rpm -U --force.
+        if (File.Exists("/usr/bin/rpm") && IsRpmInstalled())
         {
             return "rpm";
         }
         return null;
+    }
+
+    private static bool IsRpmInstalled()
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo("/usr/bin/rpm")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            foreach (var arg in new[] { "-q", PackageName })
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
+            using var process = Process.Start(startInfo);
+            if (process == null || !process.WaitForExit(5000))
+            {
+                return false;
+            }
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public async Task<ColituUpdateInfo?> CheckForUpdateAsync(bool ignoreAttemptCache = false)
@@ -210,15 +240,16 @@ public sealed class ColituUpdateService
             AttemptedAt = DateTimeOffset.Now
         });
 
+        // Absolute paths: pkexec would otherwise look the program up in this user's PATH.
         var arguments = info.PackageKind == "deb"
-            ? new[] { "apt-get", "install", "-y", "--allow-downgrades", info.LocalPath }
+            ? new[] { ColituShell.SystemBinary("apt-get"), "install", "-y", "--allow-downgrades", info.LocalPath }
             : File.Exists("/usr/bin/dnf")
-                ? ["dnf", "install", "-y", info.LocalPath]
+                ? ["/usr/bin/dnf", "install", "-y", info.LocalPath]
                 : File.Exists("/usr/bin/zypper")
-                    ? ["zypper", "--non-interactive", "install", "--allow-unsigned-rpm", info.LocalPath]
-                    : ["rpm", "-U", "--force", info.LocalPath];
+                    ? ["/usr/bin/zypper", "--non-interactive", "install", "--allow-unsigned-rpm", info.LocalPath]
+                    : [ColituShell.SystemBinary("rpm"), "-U", "--force", info.LocalPath];
 
-        var startInfo = new ProcessStartInfo("pkexec")
+        var startInfo = new ProcessStartInfo(ColituShell.SystemBinary("pkexec"))
         {
             UseShellExecute = false,
             RedirectStandardError = true,

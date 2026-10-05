@@ -12,6 +12,9 @@ internal class Program
 
     private static readonly List<PosixSignalRegistration> Signals = [];
 
+    [DllImport("libc", EntryPoint = "umask")]
+    private static extern uint SetUmask(uint mask);
+
     // Initialization code. Don't use any Avalonia, third-party APIs or any
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
@@ -37,6 +40,13 @@ internal class Program
 
     private static bool OnStartup(string[]? args)
     {
+        // Everything the app creates (database with server credentials, core configs,
+        // logs, scripts) is private to this user from the start, whatever the session's umask.
+        if (OperatingSystem.IsLinux())
+        {
+            try { SetUmask(0b000_111_111); } catch { /* no libc umask: folders are still restricted below */ }
+        }
+
         Instance = ColituSingleInstance.Acquire();
         if (Instance == null)
         {
@@ -60,7 +70,8 @@ internal class Program
         AppManager.Instance.WindowDialog = new WindowDialog();
 
         // Logout or shutdown while connected: hand the system proxy back before the session ends.
-        foreach (var signal in new[] { PosixSignal.SIGTERM, PosixSignal.SIGHUP })
+        // SIGINT too: Ctrl+C in a terminal must not leave the system proxy pointing at a dead core.
+        foreach (var signal in new[] { PosixSignal.SIGTERM, PosixSignal.SIGHUP, PosixSignal.SIGINT })
         {
             Signals.Add(PosixSignalRegistration.Create(signal, _ => ColituVpnService.Instance.CleanupForSessionEnd()));
         }

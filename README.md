@@ -9,12 +9,12 @@ The open-source Linux desktop client of [Colitu VPN](https://colitu.com). A
 single native window handles the account, locations and connection through the
 Colitu API; underneath, a core layer runs Xray and sing-box and manages the
 system proxy, TUN, routing and DNS. It shares that core layer with the
-[Windows client](https://github.com/cyberlexs/colitu-windows).
+[Windows client](https://github.com/colitu/colitu-windows).
 
 | | |
 |---|---|
 | App | `Colitu VPN` (`/opt/colitu-vpn/ColituVPN`, launcher `colitu-vpn`), Avalonia on .NET 10 |
-| Version | `1.1.1` (`src/ColituVPN/ColituVPN.csproj`) |
+| Version | `1.1.2` (`src/ColituVPN/ColituVPN.csproj`) |
 | OS | Debian/Ubuntu/Mint (`.deb`), Fedora/RHEL/openSUSE (`.rpm`), any distribution (`.tar.gz`); x64 and arm64 |
 | Languages | Russian, English, Turkish |
 | License | [GPL-3.0](LICENSE) |
