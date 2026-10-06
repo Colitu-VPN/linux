@@ -67,7 +67,8 @@ public class ColituAuditFixTests
         script.Should().NotContain("nft delete table inet colitu_killswitch 2>/dev/null || true\nnft -f",
             "a separate delete would leave a moment without rules");
         script.Should().Contain("table inet colitu_killswitch\ndelete table inet colitu_killswitch\ntable inet colitu_killswitch {");
-        script.Should().Contain("echo $! > /run/colitu-killswitch.watch");
+        // 1.2.0: no new watcher is started; the rules fail closed when the app dies.
+        script.Should().NotContain("echo $! > /run/colitu-killswitch.watch");
     }
 
     [Fact]

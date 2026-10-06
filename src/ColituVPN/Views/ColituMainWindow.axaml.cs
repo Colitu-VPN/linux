@@ -66,6 +66,10 @@ public partial class ColituMainWindow : Window
         WireAuth();
         WireReset();
         WireVerify();
+        WireMfa();
+        WireRecovery();
+        WirePaused();
+        WireSplit();
         WireHome();
         WireLocations();
         WirePlan();
@@ -92,6 +96,18 @@ public partial class ColituMainWindow : Window
         ShowView(LoadingView);
         _ = CheckForUpdatesAsync(quiet: true);
         await _vpn.RecoverFromPreviousRunAsync();
+        await RestoreSessionAsync();
+        ApplyDevicePause();
+        // The kill switch of a crashed run still blocks the internet: explain why, and
+        // offer to reconnect or to turn protection off.
+        if (_vpn.KillSwitchRecoveryPending)
+        {
+            ShowKillSwitchRecovery();
+        }
+    }
+
+    private async Task RestoreSessionAsync()
+    {
         var state = await _auth.InitializeAsync();
         if (state == ColituStartupState.VerificationRequired)
         {
@@ -134,8 +150,17 @@ public partial class ColituMainWindow : Window
         _refresh.Start();
         StartSupportPolling();
 
-        // TUN auto-connect waits for the sudo password: it is never asked for at startup.
-        if ((!_planRequired || offline) && !_vpn.NeedsSudoPassword)
+        // Once: offer to protect all traffic (TUN). Not while a crashed run's kill switch
+        // waits for an answer (that prompt comes first).
+        if (_vpn.ShouldOfferTun && !_vpn.KillSwitchRecoveryPending)
+        {
+            await OfferTunModeAsync();
+        }
+
+        // TUN auto-connect waits for the sudo password: it is never asked for at startup
+        // (unless the user just chose TUN in the offer above). After a crash with the kill
+        // switch on, the user decides first.
+        if ((!_planRequired || offline) && !_vpn.NeedsSudoPassword && !_vpn.KillSwitchRecoveryPending)
         {
             if (await _vpn.TryAutoConnectAsync())
             {
@@ -222,12 +247,16 @@ public partial class ColituMainWindow : Window
         ShowAuth();
         ShowAuthError(Loc.I["auth.expired"]);
         ShowFromTray();
+        if (_vpn.KillSwitchEngaged)
+        {
+            ShowKillSwitchRecovery();
+        }
     }
 
     // ── Views and navigation ───────────────────────────────────────────────
     private void ShowView(Control view)
     {
-        foreach (var candidate in new Control[] { LoadingView, AuthView, ResetView, VerifyView, AppView })
+        foreach (var candidate in new Control[] { LoadingView, AuthView, ResetView, VerifyView, MfaView, AppView })
         {
             candidate.IsVisible = candidate == view;
         }
@@ -344,6 +373,11 @@ public partial class ColituMainWindow : Window
         BuildCategoryFilter();
         RenderServers();
         ApplyVerifyTexts();
+        ApplyMfaTexts();
+        if (KillSwitchRecoveryPrompt.IsVisible)
+        {
+            KillSwitchRecoveryBody.Text = Loc.I[_vpn.KillSwitchApplies ? "ksr.body" : "ksr.bodyOff"];
+        }
         RenderSupportList();
         UpdateTrayMenu();
         _ = LoadDevicesAsync();
@@ -609,8 +643,8 @@ public partial class ColituMainWindow : Window
         }
         if (_vpn.KillSwitchEngaged && _vpn.Status != ColituVpnStatus.Connected)
         {
-            await _vpn.DisconnectAsync();
-            ApplyStatus();
+            ShowFromTray();
+            await TurnOffKillSwitchBlockAsync();
             return;
         }
         if (_vpn.Status is not (ColituVpnStatus.Connected or ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting) && _vpn.NeedsSudoPassword)
@@ -639,6 +673,12 @@ public partial class ColituMainWindow : Window
         catch (Exception ex)
         {
             Logging.SaveLog("ColituMainWindow.ExitAsync", ex);
+        }
+        if (_vpn.KillSwitchEngaged)
+        {
+            // Rules adopted from a crashed run and no password this run: they stay (fail
+            // closed). The next start explains them again.
+            Notify(Loc.I["ksr.exitNotice"]);
         }
         if (_trayIcon != null)
         {

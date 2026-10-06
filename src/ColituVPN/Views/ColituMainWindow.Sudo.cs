@@ -30,8 +30,11 @@ public partial class ColituMainWindow
         };
     }
 
-    /// <summary>Shows the prompt; true once a working password is stored.</summary>
-    private Task<bool> AskSudoPasswordAsync()
+    /// <summary>
+    /// Shows the prompt; true once a working password is stored. <paramref name="bodyKey"/>
+    /// says what the password is for (TUN mode, or changing the kill switch rules).
+    /// </summary>
+    private Task<bool> AskSudoPasswordAsync(string bodyKey = "sudo.body")
     {
         if (AppManager.Instance.LinuxSudoPwd.IsNotEmpty())
         {
@@ -39,6 +42,7 @@ public partial class ColituMainWindow
         }
         _sudoResult?.TrySetResult(false);
         _sudoResult = new TaskCompletionSource<bool>();
+        SudoBodyText.Text = Loc.I[bodyKey];
         SudoPasswordBox.Text = "";
         SudoErrorBox.IsVisible = false;
         SudoSpinner.IsVisible = false;

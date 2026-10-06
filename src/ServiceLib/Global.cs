@@ -79,6 +79,13 @@ public class Global
     public const string AutoRunName = "ColituVPNAutoRun";
     public const string SystemProxyExceptionsWindows = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*";
     public const string SystemProxyExceptionsLinux = "localhost,127.0.0.0/8,::1";
+
+    /// <summary>
+    /// Colitu (Linux, TUN mode): firewall mark sing-box puts on the connections it sends
+    /// out directly (split tunneling, Russian sites, the cores' own traffic). The nftables
+    /// kill switch lets this mark through; only a root process (the TUN core) can set it.
+    /// </summary>
+    public const int LinuxTunDirectRoutingMark = 0x434c;
     public const string RoutingRuleComma = "<COMMA>";
     public const string GrpcGunMode = "gun";
     public const string GrpcMultiMode = "multi";

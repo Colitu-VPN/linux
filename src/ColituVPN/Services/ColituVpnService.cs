@@ -44,6 +44,8 @@ public sealed class ColituVpnService
     /// <summary>Names and addresses of the current VPN server; the only hosts kept readable in core log lines.</summary>
     private readonly HashSet<string> _serverHosts = new(StringComparer.OrdinalIgnoreCase);
     private int _watchdogBusy;
+    /// <summary>The status saved by the previous run; Connected here means it did not exit cleanly.</summary>
+    private ColituVpnStatus _statusAtLastExit = ColituVpnStatus.Disconnected;
 
     /// <summary>The transport the current tunnel runs on (hysteria2, vless-reality, …); for support diagnostics.</summary>
     public string? ConnectedProtocol => Status == ColituVpnStatus.Connected ? _activeTransport : null;
@@ -62,6 +64,28 @@ public sealed class ColituVpnService
     public string? LastError { get; private set; }
     public DateTimeOffset? ConnectedAt { get; private set; }
     public ColituVpnPreferences Preferences => _session.Preferences.Normalize();
+
+    /// <summary>
+    /// Proxy mode is the default (TUN asks for the sudo password), so Colitu offers TUN once:
+    /// on the first start, and once to users who already ran an older version. The offer
+    /// never changes the mode by itself; only the user's answer does.
+    /// </summary>
+    public bool ShouldOfferTun => !_session.TunOfferAnswered && !Preferences.IsTunMode && ColituKillSwitch.SudoAvailable;
+
+    public void MarkTunOfferAnswered()
+    {
+        _session = _session with { TunOfferAnswered = true };
+        SaveState();
+    }
+
+    /// <summary>The plan-end banner was closed today (it comes back the next day).</summary>
+    public bool PlanNoticeDismissedToday => _session.PlanNoticeDismissedOn == DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    public void DismissPlanNoticeForToday()
+    {
+        _session = _session with { PlanNoticeDismissedOn = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) };
+        SaveState();
+    }
 
     /// <summary>
     /// Raised with a localization key for events the user should hear about even
@@ -83,10 +107,17 @@ public sealed class ColituVpnService
         try
         {
             var servers = await _api.GetServersAsync();
-            _lastServers = servers.Servers;
+            // Routes are looked up by id like nodes: a saved choice may be one of them.
+            _lastServers = servers.Servers.Concat(servers.Multihop).ToList();
+            _multihopRoutes = servers.Multihop;
             if (!IsAutoSelection && SelectedServer == null && _session.SelectedServerId.IsNotEmpty())
             {
-                SelectedServer = servers.Servers.FirstOrDefault(s => string.Equals(s.Id, _session.SelectedServerId, StringComparison.OrdinalIgnoreCase));
+                SelectedServer = _lastServers.FirstOrDefault(s => string.Equals(s.Id, _session.SelectedServerId, StringComparison.OrdinalIgnoreCase));
+            }
+            if (Rotation == null)
+            {
+                // Known before the first connect: a rotation restricts the transports to VLESS.
+                _ = TryLoadRotationAsync();
             }
             return servers;
         }
@@ -94,6 +125,61 @@ public sealed class ColituVpnService
         {
             return new ColituServersResponse { PlanRequired = true };
         }
+    }
+
+    // ── Multihop routes and the rotating exit IP ───────────────────────────
+    private List<ColituVpnServer> _multihopRoutes = [];
+
+    /// <summary>The double-VPN routes of the last server list.</summary>
+    public IReadOnlyList<ColituVpnServer> MultihopRoutes => _multihopRoutes;
+
+    /// <summary>The account's rotating-IP preference; null until it was fetched.</summary>
+    public ColituRotationPreference? Rotation { get; private set; }
+
+    /// <summary>The exit rotates on a schedule (VLESS only, so the connection avoids Hysteria2).</summary>
+    public bool RotationActive => Rotation?.Active == true;
+
+    /// <summary>The connected tunnel is a multihop route.</summary>
+    public bool OnMultihopRoute => Status == ColituVpnStatus.Connected && ConnectedServer is { IsMultihop: true };
+
+    public async Task<ColituRotationPreference> LoadRotationAsync(CancellationToken token = default)
+    {
+        var preference = await _api.GetRotationAsync(token);
+        Rotation = preference;
+        return preference;
+    }
+
+    private async Task TryLoadRotationAsync()
+    {
+        try
+        {
+            await LoadRotationAsync();
+        }
+        catch (Exception ex)
+        {
+            // An older panel has no rotation; the preference is simply unknown (off).
+            LogConnection($"Rotation preference not loaded: {ex.GetType().Name}");
+        }
+    }
+
+    public async Task<ColituRotationPreference> SaveRotationAsync(int intervalSeconds, IEnumerable<string> countries, CancellationToken token = default)
+    {
+        var preference = await _api.SetRotationAsync(intervalSeconds, countries, token);
+        Rotation = preference;
+        return preference;
+    }
+
+    /// <summary>
+    /// Rotation status of the node this device is connected to; null when not connected to a
+    /// node (a multihop route has fixed ends and does not rotate).
+    /// </summary>
+    public async Task<ColituRotationStatus?> GetRotationStatusAsync(CancellationToken token = default)
+    {
+        if (Status != ColituVpnStatus.Connected || ConnectedServer is not { IsMultihop: false, Id: { Length: > 0 } nodeId })
+        {
+            return null;
+        }
+        return await _api.GetRotationStatusAsync(nodeId, token);
     }
 
     public async Task<ColituStatsResponse?> GetStatsAsync()
@@ -171,6 +257,12 @@ public sealed class ColituVpnService
             var connected = FindServer(config.ServerId) ?? config.Server ?? server;
             var profiles = await ImportConfigAsync(config, connected);
             await PrepareConnectionModeAsync(config.Server?.CountryCode ?? connected?.CountryCode);
+            // While the kill switch blocks (tunnel lost, or rules kept from a crashed run), let
+            // this attempt's server (resolved with the config) through before the core dials it.
+            if (_killSwitch.IsEngaged && KillSwitchApplies)
+            {
+                await EngageKillSwitchAsync("allow the new server before connecting");
+            }
             try
             {
                 await StartFirstWorkingProfileAsync(profiles, config, connected, token);
@@ -189,6 +281,7 @@ public sealed class ColituVpnService
             ConnectedAt = DateTimeOffset.Now;
             _probeFailures = 0;
             await ApplyKillSwitchForConnectedTunnelAsync();
+            KillSwitchRecoveryPending = false;
             SetStatus(ColituVpnStatus.Connected);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -217,6 +310,13 @@ public sealed class ColituVpnService
             {
                 throw new ColituPlanRequiredException();
             }
+            if (ex is ColituApiException { ErrorCode: ColituDevicePause.ErrorCode } paused)
+            {
+                // The plan allows fewer devices: the kill switch must not keep the user
+                // offline on the paused screen, so the rules go (when this run can remove them).
+                await ReleaseKillSwitchAsync("this device is paused (device limit)");
+                throw new ColituDevicePausedException(paused.DevicePause ?? new ColituDevicePause());
+            }
             if (ex is ColituSudoRequiredException)
             {
                 throw;
@@ -238,18 +338,78 @@ public sealed class ColituVpnService
         ResetDirectConnections();
         try
         {
-            await _api.SetPreferredServerAsync(server?.Id, token);
+            // A route is not a node: it is never stored as this device's preferred node.
+            if (server is not { IsMultihop: true })
+            {
+                await _api.SetPreferredServerAsync(server?.Id, token);
+            }
+            if (Rotation == null && server is not { IsMultihop: true })
+            {
+                // Whether the exit rotates decides the transports; do not connect blind if it is quickly known.
+                using var rotationBudget = CancellationTokenSource.CreateLinkedTokenSource(token);
+                rotationBudget.CancelAfter(TimeSpan.FromSeconds(3));
+                try
+                {
+                    await LoadRotationAsync(rotationBudget.Token);
+                }
+                catch (Exception ex) when (!token.IsCancellationRequested)
+                {
+                    LogConnection($"Rotation preference not loaded: {ex.GetType().Name}");
+                }
+            }
             var preferenceMs = watch.ElapsedMilliseconds;
             var config = await _api.GetConfigAsync(server, token)
                 ?? throw new ColituConnectException(Loc.I["err.noServers"]);
             LogConnection($"Panel answered in {watch.ElapsedMilliseconds} ms (preference {preferenceMs} ms, config {watch.ElapsedMilliseconds - preferenceMs} ms)");
+            ColituAuthService.Instance.SetDevicePause(null);
             SaveCachedConfig(cacheKey, config);
-            return config;
+            return RestrictToVlessIfNeeded(config, server);
+        }
+        catch (ColituApiException ex) when (ex.ErrorCode is "MULTIHOP_ROUTE_NOT_FOUND")
+        {
+            // The route was removed or renamed: learn the current list for the next try.
+            LogConnection("Multihop route no longer offered by the panel");
+            _ = RefreshServerListQuietlyAsync();
+            throw new ColituConnectException(Loc.I["multihop.gone"], ex);
         }
         catch (Exception ex) when (!token.IsCancellationRequested && IsNetworkFailure(ex) && LoadCachedConfig(cacheKey) is { } cached)
         {
             LogConnection($"Panel unreachable after {watch.ElapsedMilliseconds} ms ({ex.GetType().Name}); using cached connection settings for {cacheKey}");
-            return cached;
+            return RestrictToVlessIfNeeded(cached, server);
+        }
+    }
+
+    /// <summary>
+    /// A multihop route and a rotating exit run on VLESS only: the other transports (Hysteria2, Trojan,
+    /// Shadowsocks) are dropped from the candidates, and a node without VLESS cannot be used for them.
+    /// </summary>
+    private ColituVpnConfigResponse RestrictToVlessIfNeeded(ColituVpnConfigResponse config, ColituVpnServer? server)
+    {
+        if (server is not { IsMultihop: true } && !RotationActive)
+        {
+            return config;
+        }
+        var restricted = ColituApiClient.RestrictToVless(config);
+        if (restricted == null)
+        {
+            throw new ColituConnectException(Loc.I[server is { IsMultihop: true } ? "multihop.needsVless" : "rotation.needsVless"]);
+        }
+        if (restricted != config)
+        {
+            LogConnection($"VLESS only ({(server is { IsMultihop: true } ? "multihop route" : "rotating IP")}): {config.Candidates.Count - restricted.Candidates.Count} other transport(s) skipped");
+        }
+        return restricted;
+    }
+
+    private async Task RefreshServerListQuietlyAsync()
+    {
+        try
+        {
+            await GetServersAsync();
+        }
+        catch (Exception ex)
+        {
+            LogConnection($"Server list not refreshed: {ex.GetType().Name}");
         }
     }
 
@@ -328,7 +488,8 @@ public sealed class ColituVpnService
 
     public async Task<bool> TryAutoConnectAsync()
     {
-        if (!Preferences.AutoConnectEnabled || GetStatus() is ColituVpnStatus.Connected or ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting)
+        if (!Preferences.AutoConnectEnabled || GetStatus() is ColituVpnStatus.Connected or ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting
+            || ColituAuthService.Instance.DevicePause != null)
         {
             return false;
         }
@@ -354,7 +515,7 @@ public sealed class ColituVpnService
             catch (Exception ex)
             {
                 LogConnection($"Auto-connect attempt {round} failed: {ex.Message}");
-                if (_userDisconnected || round == 2)
+                if (_userDisconnected || round == 2 || ex is ColituDevicePausedException or ColituPlanRequiredException)
                 {
                     return false;
                 }
@@ -434,8 +595,20 @@ public sealed class ColituVpnService
     {
         try
         {
+            // Kill switch rules outlive a crash on purpose (fail closed). Take them over:
+            // they keep blocking until the user reconnects (which replaces them) or turns
+            // protection off (which needs the sudo password to remove them).
+            if (ColituKillSwitch.HasLeftoverRules())
+            {
+                _killSwitch.Adopt();
+                KillSwitchRecoveryPending = true;
+                LogConnection(KillSwitchApplies
+                    ? "Kill switch rules of the previous run are still in place (unclean exit); keeping them until the user reconnects or turns protection off"
+                    : "Kill switch rules of the previous run are still in place, but the kill switch is now off; they are removed once the sudo password is entered");
+            }
+
             await EnsureCoreReadyAsync();
-            var wasActive = _session.Status is ColituVpnStatus.Connected or ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting;
+            var wasActive = _statusAtLastExit is ColituVpnStatus.Connected or ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting;
             if (!wasActive && _config.SystemProxyItem.SysProxyType != ESysProxyType.ForcedChange)
             {
                 return;
@@ -456,6 +629,58 @@ public sealed class ColituVpnService
         catch (Exception ex)
         {
             Logging.SaveLog("ColituVpnService.RecoverFromPreviousRunAsync", ex);
+        }
+    }
+
+    /// <summary>
+    /// True from a start that found the kill switch rules of a crashed run until the user
+    /// reconnects or turns protection off. The internet is blocked meanwhile.
+    /// </summary>
+    public bool KillSwitchRecoveryPending { get; private set; }
+
+    /// <summary>
+    /// The crashed run's VPN cores may still run as root (TUN mode starts them through sudo)
+    /// and hold the TUN routes. Stops them; needs the sudo password. Best effort.
+    /// </summary>
+    public async Task StopOrphanRootCoresAsync()
+    {
+        var password = AppManager.Instance.LinuxSudoPwd;
+        if (password.IsNullOrEmpty() || !OperatingSystem.IsLinux())
+        {
+            return;
+        }
+        try
+        {
+            var (code, error) = await ColituKillSwitch.RunAsRootAsync(ColituKillSwitch.BuildStopOrphanCoresScript(Utils.GetBinPath(""), Utils.GetBaseDirectory("bin")), password);
+            LogConnection(code == 0 ? "Stopped VPN cores left running as root by the previous run" : $"Stopping orphan root cores failed ({code}): {error.Trim()}");
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituVpnService.StopOrphanRootCoresAsync", ex);
+        }
+    }
+
+    /// <summary>
+    /// "Turn off protection" after a crash: removes the rules the crashed run left (and its
+    /// root cores). Needs the sudo password; false when the rules are still in place.
+    /// </summary>
+    public async Task<bool> RemoveLeftoverKillSwitchAsync()
+    {
+        if (Status is not (ColituVpnStatus.Connected or ColituVpnStatus.Connecting or ColituVpnStatus.Reconnecting))
+        {
+            await StopOrphanRootCoresAsync();
+        }
+        await _connectionLock.WaitAsync();
+        try
+        {
+            _userDisconnected = true;
+            var released = await ReleaseKillSwitchAsync("turned off after an unclean exit");
+            SetStatus(ColituVpnStatus.Disconnected);
+            return released;
+        }
+        finally
+        {
+            _connectionLock.Release();
         }
     }
 
@@ -517,6 +742,8 @@ public sealed class ColituVpnService
         }
         AppManager.Instance.LinuxSudoPwd = "";
         _lastServers = [];
+        _multihopRoutes = [];
+        Rotation = null;
         SelectedServer = null;
         ConnectedServer = null;
     }
@@ -647,6 +874,11 @@ public sealed class ColituVpnService
                     Notice?.Invoke("err.noPlan");
                     return;
                 }
+                catch (ColituDevicePausedException)
+                {
+                    // The paused screen takes over; no background retries against the limit.
+                    return;
+                }
                 catch (Exception ex)
                 {
                     LogConnection($"Automatic reconnect attempt {attempt} failed: {ex.Message}");
@@ -665,7 +897,7 @@ public sealed class ColituVpnService
 
             // With the kill switch holding the connection closed, keep retrying in
             // the background so the internet returns as soon as the VPN can.
-            while (!_userDisconnected && _killSwitch.IsEngaged && Status == ColituVpnStatus.Error)
+            while (!_userDisconnected && _killSwitch.IsEngaged && Status == ColituVpnStatus.Error && ColituAuthService.Instance.DevicePause == null)
             {
                 await Task.Delay(TimeSpan.FromSeconds(20));
                 if (_userDisconnected || !_killSwitch.IsEngaged || Status != ColituVpnStatus.Error || _connectionLock.CurrentCount == 0)
@@ -676,6 +908,10 @@ public sealed class ColituVpnService
                 {
                     await ReconnectAsync();
                     Notice?.Invoke("info.reconnected");
+                    return;
+                }
+                catch (ColituDevicePausedException)
+                {
                     return;
                 }
                 catch (Exception ex)
@@ -729,7 +965,7 @@ public sealed class ColituVpnService
                 }
             }
             allowed.AddRange(new[] { "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4" }.Select(IPAddress.Parse));
-            await _killSwitch.EngageAsync(allowed);
+            await _killSwitch.EngageAsync(allowed, ColituSplitTunnel.KillSwitchBypassNetworks(Preferences));
             LogConnection($"Kill switch engaged ({reason}), {allowed.Distinct().Count()} addresses allowed");
             return true;
         }
@@ -741,15 +977,25 @@ public sealed class ColituVpnService
         }
     }
 
-    private async Task ReleaseKillSwitchAsync(string reason)
+    /// <summary>False when the rules are still in place (no sudo password yet, or nft failed).</summary>
+    private async Task<bool> ReleaseKillSwitchAsync(string reason)
     {
         if (!_killSwitch.IsEngaged)
         {
-            return;
+            return true;
         }
-        await _killSwitch.ReleaseAsync();
+        if (!await _killSwitch.ReleaseAsync())
+        {
+            LogConnection($"Kill switch could not be released ({reason}); it keeps blocking");
+            return false;
+        }
+        KillSwitchRecoveryPending = false;
         LogConnection($"Kill switch released ({reason})");
+        return true;
     }
+
+    /// <summary>True when the kill switch blocks and removing it needs the sudo password first.</summary>
+    public bool KillSwitchNeedsPasswordToRelease => _killSwitch.IsEngaged && AppManager.Instance.LinuxSudoPwd.IsNullOrEmpty();
 
     // ── Cached connection settings (encrypted: they carry credentials) ─────
     private void SaveCachedConfig(string key, ColituVpnConfigResponse config)
@@ -1013,7 +1259,11 @@ public sealed class ColituVpnService
         }
         finally
         {
-            _ = _api.ReportProtocolObservationsAsync(config.ServerId ?? server?.Id, observations);
+            // Observations are per node; a route's id is not one.
+            if (config.Server?.IsMultihop != true && server?.IsMultihop != true)
+            {
+                _ = _api.ReportProtocolObservationsAsync(config.ServerId ?? server?.Id, observations);
+            }
         }
     }
 
@@ -1047,9 +1297,16 @@ public sealed class ColituVpnService
         // tunnel. The kill switch's nftables rules work at another layer and do not conflict.
         _config.TunModeItem.StrictRoute = tun;
 
-        if (preferences.DnsLeakProtectionEnabled && _config.Inbound.Count > 0)
+        // Domain rules (split tunneling) need the name of each connection: sniff it.
+        if ((preferences.DnsLeakProtectionEnabled || preferences.SplitTunnelDomains is { Count: > 0 }) && _config.Inbound.Count > 0)
         {
             _config.Inbound.First().SniffingEnabled = true;
+        }
+
+        // Proxy mode, sites that bypass the VPN: the desktop connects to them directly too.
+        if (OperatingSystem.IsLinux())
+        {
+            _config.SystemProxyItem.SystemProxyExceptions = ColituSplitTunnel.BuildProxyExceptions(Global.SystemProxyExceptionsLinux, preferences);
         }
 
         // Ad blocking: lookups go to Colitu's AdGuard Home servers (DoH through the tunnel), which
@@ -1136,8 +1393,10 @@ public sealed class ColituVpnService
 
     internal static List<RulesItem> BuildColituRoutingRules(ColituVpnPreferences preferences, string? serverCountry = null)
     {
-        var ruDirect = RussianSitesDirect(serverCountry);
         preferences = preferences.Normalize();
+        // "Only selected apps and sites use the VPN": everything else is direct anyway, and a
+        // selected app's Russian sites must stay in the tunnel the user asked for.
+        var ruDirect = RussianSitesDirect(serverCountry) && !ColituSplitTunnel.IsIncludeActive(preferences);
         var rules = new List<RulesItem>();
 
         rules.Add(new RulesItem
@@ -1164,6 +1423,9 @@ public sealed class ColituVpnService
         // a Russian server they already arrive from a Russian address and stay in the tunnel.
         // Xray reads these from bin/geo*.dat (XRAY_LOCATION_ASSET), sing-box from bin/srss/*.srs
         // (shipped by scripts/package-linux.sh; GitHub, where sing-box would fetch them, is blocked in Russia).
+        // The user's split tunneling comes before Colitu's own regional rules.
+        rules.AddRange(ColituSplitTunnel.BuildRules(preferences));
+
         rules.Add(new RulesItem
         {
             Id = "colitu-ru-direct-domain",
@@ -1181,6 +1443,11 @@ public sealed class ColituVpnService
             Ip = ["geoip:ru"],
             Enabled = ruDirect
         });
+
+        if (ColituSplitTunnel.BuildCatchAllRule(preferences) is { } rest)
+        {
+            rules.Add(rest);
+        }
 
         return rules;
     }
@@ -1659,6 +1926,8 @@ public sealed class ColituVpnService
                 return;
             }
             _session = JsonSerializer.Deserialize<ColituVpnSession>(File.ReadAllText(StatePath()), _jsonOptions) ?? new();
+            // SaveState below writes this run's status (Disconnected) over it.
+            _statusAtLastExit = _session.Status;
             if (_session.PreferencesMigration < 1)
             {
                 // 1.6.5 made Kill Switch and Auto-Connect on by default; apply once to states saved by older builds.
@@ -1718,6 +1987,12 @@ public enum ColituVpnStatus
 /// <summary>The account has no active plan; the UI sends the user to the plan page.</summary>
 public sealed class ColituPlanRequiredException() : Exception(Loc.I["err.noPlan"]);
 
+/// <summary>The panel paused this device (DEVICE_OVER_LIMIT); the UI shows the paused screen.</summary>
+public sealed class ColituDevicePausedException(ColituDevicePause pause) : Exception(Loc.I["err.devicePaused"])
+{
+    public ColituDevicePause Pause { get; } = pause;
+}
+
 /// <summary>TUN mode needs the sudo password before the core can start; the UI asks for it and retries.</summary>
 public sealed class ColituSudoRequiredException() : Exception(Loc.I["err.admin"]);
 
@@ -1741,6 +2016,8 @@ public sealed class ColituServersResponse
     public string? Tier { get; set; }
     public ColituFreeQuota? FreeQuota { get; set; }
     public List<ColituVpnServer> Servers { get; set; } = [];
+    /// <summary>Multihop (double VPN) routes; empty when the panel offers none.</summary>
+    public List<ColituVpnServer> Multihop { get; set; } = [];
     public ColituVpnServer? SelectedServer { get; set; }
     /// <summary>The panel refused the list because the account has no active plan.</summary>
     public bool PlanRequired { get; set; }
@@ -1777,6 +2054,11 @@ public sealed class ColituVpnServer
     public string? TestUrl { get; set; }
     /// <summary>Use-case categories from the panel (streaming, gaming, privacy, speed, torrent, ai).</summary>
     public List<string> Categories { get; set; } = [];
+    /// <summary>A multihop route (double VPN): <see cref="Entry"/> node, then <see cref="Exit"/> node. The list item's id is the route id.</summary>
+    public bool IsMultihop { get; set; }
+    public string? RouteSlug { get; set; }
+    public ColituRouteEndpoint? Entry { get; set; }
+    public ColituRouteEndpoint? Exit { get; set; }
     public string Quality => PingQuality(Ping);
     public string PingDisplay => IsPingLoading
         ? "Checking..."
@@ -1990,7 +2272,10 @@ public sealed record ColituVpnPreferences(
     string Language = "",
     string ConnectionMode = ColituConnectionModes.Proxy,
     bool CloseToTray = true,
-    bool AdBlockEnabled = false)
+    bool AdBlockEnabled = false,
+    string SplitTunnelMode = ColituSplitTunnelModes.Off,
+    List<string>? SplitTunnelDomains = null,
+    List<string>? SplitTunnelIps = null)
 {
     public bool IsTunMode => string.Equals(ConnectionMode, ColituConnectionModes.Tun, StringComparison.OrdinalIgnoreCase);
 
@@ -2000,32 +2285,31 @@ public sealed record ColituVpnPreferences(
         var connectionMode = string.Equals(ConnectionMode?.Trim(), ColituConnectionModes.Tun, StringComparison.OrdinalIgnoreCase)
             ? ColituConnectionModes.Tun
             : ColituConnectionModes.Proxy;
+        var splitMode = ColituSplitTunnelModes.Normalize(SplitTunnelMode);
 
         return this with
         {
-            SplitTunnelApps = SplitTunnelApps?
-                .Select(NormalizeProcessName)
-                .Where(app => app.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList() ?? [],
+            // Saved lists are validated again: they end up in core configs and root's nftables.
+            SplitTunnelApps = ColituSplitTunnel.CleanApps(SplitTunnelApps),
+            SplitTunnelDomains = ColituSplitTunnel.CleanDomains(SplitTunnelDomains),
+            SplitTunnelIps = ColituSplitTunnel.CleanNetworks(SplitTunnelIps),
+            SplitTunnelMode = splitMode,
+            SplitTunnelingEnabled = splitMode != ColituSplitTunnelModes.Off,
             Language = language,
             ConnectionMode = connectionMode
         };
     }
 
-    public string SplitTunnelAppsText => string.Join(", ", Normalize().SplitTunnelApps);
-
-    public static List<string> ParseApps(string? value)
+    /// <summary>Split-tunneling settings that end up in the core config (a change needs a reconnect).</summary>
+    public bool SameSplitTunnel(ColituVpnPreferences other)
     {
-        return (value ?? "")
-            .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(NormalizeProcessName)
-            .Where(app => app.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var a = Normalize();
+        var b = other.Normalize();
+        return a.SplitTunnelMode == b.SplitTunnelMode
+            && a.SplitTunnelApps!.SequenceEqual(b.SplitTunnelApps!)
+            && a.SplitTunnelDomains!.SequenceEqual(b.SplitTunnelDomains!)
+            && a.SplitTunnelIps!.SequenceEqual(b.SplitTunnelIps!);
     }
-
-    private static string NormalizeProcessName(string value) => value.Trim().Trim('"');
 }
 
 public sealed record ColituVpnSession
@@ -2037,6 +2321,10 @@ public sealed record ColituVpnSession
     public ColituVpnPreferences Preferences { get; init; } = new();
     /// <summary>Highest one-time preference migration applied to this saved state.</summary>
     public int PreferencesMigration { get; init; }
+    /// <summary>The one-time "protect all traffic (TUN)" offer was answered (or not needed).</summary>
+    public bool TunOfferAnswered { get; init; }
+    /// <summary>Local date (yyyy-MM-dd) the plan-end banner was last closed.</summary>
+    public string? PlanNoticeDismissedOn { get; init; }
 }
 
 public static class ColituServerSelectionModes

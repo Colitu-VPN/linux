@@ -7,6 +7,7 @@ using Xunit;
 
 namespace ColituVPN.Tests;
 
+[Collection("Language")]
 public class ColituLocalizationTests
 {
     private static readonly Regex Placeholder = new(@"\{[a-z]+\}", RegexOptions.Compiled);

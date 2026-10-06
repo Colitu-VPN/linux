@@ -37,6 +37,17 @@ public partial class CoreConfigSingboxService
             {
                 _coreConfig.route.auto_detect_interface = true;
 
+                // Colitu: mark direct connections so the nftables kill switch (which drops
+                // everything that leaves outside the TUN) lets deliberate bypasses through.
+                if (Utils.IsLinux())
+                {
+                    var directOutbound = _coreConfig.outbounds.FirstOrDefault(o => o.tag == Global.DirectTag);
+                    if (directOutbound != null)
+                    {
+                        directOutbound.routing_mark ??= Global.LinuxTunDirectRoutingMark;
+                    }
+                }
+
                 var tunRules = JsonUtils.Deserialize<List<Rule4Sbox>>(EmbedUtils.GetEmbedText(Global.TunSingboxRulesFileName));
                 if (tunRules != null)
                 {

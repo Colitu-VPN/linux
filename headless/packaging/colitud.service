@@ -1,0 +1,41 @@
+[Unit]
+Description=Colitu VPN headless daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root creates the TUN device and the routes; the group lets members of
+# "colitu" use the control socket (the colitu command).
+User=root
+Group=colitu
+ExecStart=/usr/bin/colitud
+Restart=on-failure
+RestartSec=3
+# colitud stops sing-box itself (it removes its routes), then systemd cleans up.
+KillMode=mixed
+TimeoutStopSec=20
+
+# /var/lib/colitu: tokens and device id (state.json, 0600).
+# /run/colitu: control socket and the generated sing-box config.
+StateDirectory=colitu
+StateDirectoryMode=0700
+RuntimeDirectory=colitu
+RuntimeDirectoryMode=0750
+UMask=0077
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/colitu /var/lib/colitu
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

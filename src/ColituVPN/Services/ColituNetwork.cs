@@ -55,6 +55,18 @@ public static class ColituNetwork
         return resolved;
     }
 
+    /// <summary>
+    /// Records a server that is dialed by IP address (nothing was resolved for it), so the kill switch
+    /// lets the tunnel's entry server through like any resolved one.
+    /// </summary>
+    internal static void RememberServerAddress(IPAddress address)
+    {
+        lock (CacheGate)
+        {
+            ResolveCache[address.ToString()] = (address, DateTimeOffset.UtcNow.AddMinutes(10));
+        }
+    }
+
     /// <summary>Every address resolved so far (VPN servers, the panel); the kill switch keeps them reachable.</summary>
     internal static IReadOnlyList<IPAddress> KnownAddresses()
     {

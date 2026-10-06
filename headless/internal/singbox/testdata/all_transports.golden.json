@@ -1,0 +1,145 @@
+{
+  "dns": {
+    "final": "dns-tunnel",
+    "servers": [
+      {
+        "detour": "proxy",
+        "path": "/dns-query",
+        "server": "9.9.9.9",
+        "server_port": 443,
+        "tag": "dns-tunnel",
+        "type": "https"
+      },
+      {
+        "tag": "dns-bootstrap",
+        "type": "local"
+      }
+    ],
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "interface_name": "colitu1",
+      "mtu": 1400,
+      "route_exclude_address": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "fc00::/7",
+        "fe80::/10"
+      ],
+      "stack": "system",
+      "strict_route": true,
+      "tag": "tun-in",
+      "type": "tun"
+    }
+  ],
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "outbounds": [
+    {
+      "domain_resolver": "dns-bootstrap",
+      "flow": "xtls-rprx-vision",
+      "packet_encoding": "xudp",
+      "server": "node.example.test",
+      "server_port": 443,
+      "tag": "vless-reality-1",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+          "short_id": "ab12"
+        },
+        "server_name": "front.example.test",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "11111111-2222-3333-4444-555555555555"
+    },
+    {
+      "domain_resolver": "dns-bootstrap",
+      "password": "hy2-secret",
+      "server": "node.example.test",
+      "server_port": 8443,
+      "tag": "hysteria2-2",
+      "tls": {
+        "enabled": true,
+        "server_name": "node.example.test"
+      },
+      "type": "hysteria2"
+    },
+    {
+      "domain_resolver": "dns-bootstrap",
+      "password": "tuic-secret",
+      "server": "node.example.test",
+      "server_port": 8444,
+      "tag": "tuic-3",
+      "tls": {
+        "enabled": true,
+        "server_name": "node.example.test"
+      },
+      "type": "tuic",
+      "uuid": "11111111-2222-3333-4444-555555555555"
+    },
+    {
+      "domain_resolver": "dns-bootstrap",
+      "method": "aes-128-gcm",
+      "password": "ss-secret",
+      "server": "203.0.113.7",
+      "server_port": 8388,
+      "tag": "shadowsocks-4",
+      "type": "shadowsocks"
+    },
+    {
+      "interval": "3m",
+      "outbounds": [
+        "vless-reality-1",
+        "hysteria2-2",
+        "tuic-3",
+        "shadowsocks-4"
+      ],
+      "tag": "proxy",
+      "tolerance": 50,
+      "type": "urltest",
+      "url": "https://cp.cloudflare.com/generate_204"
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "dns-bootstrap",
+      "strategy": "prefer_ipv4"
+    },
+    "final": "proxy",
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "action": "hijack-dns",
+        "protocol": "dns"
+      },
+      {
+        "action": "route",
+        "ip_is_private": true,
+        "outbound": "direct"
+      }
+    ]
+  }
+}

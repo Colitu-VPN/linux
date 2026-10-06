@@ -406,3 +406,6 @@ FodyWeavers.xsd
 # Colitu release output (packages and the signed manifest)
 release-linux/
 out/
+
+# Headless client build output
+/headless/dist/

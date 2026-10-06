@@ -9,6 +9,11 @@
 # core bundle in 2dust/v2rayN-core-bin, pinned to one commit and checked against
 # its SHA-256 (the cores run as root in TUN mode). Update CORE_COMMIT and both
 # hashes together. Needs: curl, unzip, rsync, dpkg-deb, rpmbuild, sha256sum.
+#
+# The .deb also carries the headless client (colitud + colitu, headless/): it is
+# cross-compiled with Go (CGO_ENABLED=0). COLITU_HEADLESS=auto (default) includes it when
+# Go (or HEADLESS_BIN_DIR, a prebuilt `stage-headless.sh build` dir) is available,
+# 1 requires it, 0 leaves it out. The .rpm and .tar.gz do not include it yet.
 set -euo pipefail
 
 VERSION="${1:?version}"
@@ -99,11 +104,24 @@ install -m 0644 "$ICON" "$STAGE/usr/share/icons/hicolor/256x256/apps/colitu-vpn.
 install -m 0644 "$ICON" "$STAGE/usr/share/pixmaps/colitu-vpn.png"
 install -m 0644 "$ROOT/LICENSE" "$STAGE/usr/share/doc/colitu-vpn/copyright"
 
-SIZE_KB="$(du -sk "$STAGE" | cut -f1)"
-
 # ── .deb ────────────────────────────────────────────────────────────────
 DEB="$WORK/deb"
 rsync -a "$STAGE/" "$DEB/"
+
+# Headless client: binaries, systemd unit, sysusers file.
+HEADLESS_MODE="${COLITU_HEADLESS:-auto}"
+HEADLESS_DEB=0
+if [[ "$HEADLESS_MODE" != 0 ]]; then
+  if [[ -n "${HEADLESS_BIN_DIR:-}" ]] || command -v "${GO:-go}" >/dev/null 2>&1; then
+    bash "$ROOT/headless/packaging/stage-headless.sh" stage "$DEB" "$DEB_ARCH" "$VERSION"
+    HEADLESS_DEB=1
+  elif [[ "$HEADLESS_MODE" == 1 ]]; then
+    echo "COLITU_HEADLESS=1 but Go was not found" >&2; exit 1
+  else
+    echo "[!] Go not found: the .deb is built without the headless client (colitud, colitu)" >&2
+  fi
+fi
+SIZE_KB="$(du -sk "$DEB" | cut -f1)"
 mkdir -p "$DEB/DEBIAN"
 cat > "$DEB/DEBIAN/control" <<EOF
 Package: colitu-vpn
@@ -121,6 +139,12 @@ Description: Colitu VPN desktop client for Linux
  TUN modes, kill switch (nftables), DNS leak protection, ad blocking and
  live support. Includes the Xray and sing-box cores.
 EOF
+if [[ "$HEADLESS_DEB" == 1 ]]; then
+  cat >> "$DEB/DEBIAN/control" <<'EOF'
+ The package also installs the headless client for servers and Raspberry Pi
+ (the colitud service and the colitu command); it is not enabled automatically.
+EOF
+fi
 cat > "$DEB/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
@@ -129,17 +153,28 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f 
 exit 0
 EOF
 cp "$DEB/DEBIAN/postinst" "$DEB/DEBIAN/postrm"
-# Removing the app (not upgrading) also removes a kill-switch table and its watcher
-# that a crashed or killed app may have left behind.
+# The kill switch fails closed: its nftables table outlives a crashed or killed app.
+# Removing the app (not upgrading) removes the table, its marker and an old (<= 1.1.2) watcher.
 cat > "$DEB/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = remove ] || [ "$1" = purge ]; then
   command -v nft >/dev/null 2>&1 && nft delete table inet colitu_killswitch 2>/dev/null || true
+  rm -f /run/colitu-killswitch.active
   if [ -r /run/colitu-killswitch.watch ]; then kill "$(cat /run/colitu-killswitch.watch)" 2>/dev/null || true; rm -f /run/colitu-killswitch.watch; fi
 fi
 exit 0
 EOF
+if [[ "$HEADLESS_DEB" == 1 ]]; then
+  # Insert the headless fragments (group, daemon-reload, stop on removal) before each
+  # script's closing "exit 0". The service is never enabled or started automatically.
+  for f in postinst postrm prerm; do
+    [[ "$(tail -n1 "$DEB/DEBIAN/$f")" == "exit 0" ]] || { echo "$f does not end with exit 0" >&2; exit 1; }
+    sed -i '$d' "$DEB/DEBIAN/$f"
+    cat "$ROOT/headless/packaging/maintainer-$f.sh" >> "$DEB/DEBIAN/$f"
+    echo "exit 0" >> "$DEB/DEBIAN/$f"
+  done
+fi
 chmod 0755 "$DEB/DEBIAN/postinst" "$DEB/DEBIAN/postrm" "$DEB/DEBIAN/prerm"
 DEB_OUT="$OUT/colitu-vpn_${VERSION}_${DEB_ARCH}.deb"
 dpkg-deb --root-owner-group -Zxz --build "$DEB" "$DEB_OUT"
@@ -182,6 +217,7 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -f 
 %preun
 if [ \$1 -eq 0 ]; then
   command -v nft >/dev/null 2>&1 && nft delete table inet colitu_killswitch 2>/dev/null || :
+  rm -f /run/colitu-killswitch.active
   if [ -r /run/colitu-killswitch.watch ]; then kill "\$(cat /run/colitu-killswitch.watch)" 2>/dev/null || :; rm -f /run/colitu-killswitch.watch; fi
 fi
 

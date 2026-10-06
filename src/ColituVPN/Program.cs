@@ -21,6 +21,14 @@ internal class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // "colitu-vpn --colitu-cleanup" (same switch as on Windows): remove the kill switch
+        // rules and exit, without opening the app. Works while another copy runs.
+        if (args.Any(arg => arg == ColituKillSwitch.CleanupArg))
+        {
+            Environment.Exit(ColituKillSwitch.RunCommandLineCleanup());
+            return;
+        }
+
         if (OnStartup(args) == false)
         {
             Environment.Exit(0);

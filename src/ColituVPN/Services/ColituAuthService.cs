@@ -53,6 +53,63 @@ public sealed class ColituAuthService
     /// </summary>
     public event Action<string?>? SessionExpired;
 
+    /// <summary>
+    /// Set when the panel answers DEVICE_OVER_LIMIT: the plan allows fewer devices and this
+    /// one is paused. The app shows the paused screen and never connects by itself meanwhile.
+    /// </summary>
+    public ColituDevicePause? DevicePause { get; private set; }
+    public event Action? DevicePauseChanged;
+
+    internal void SetDevicePause(ColituDevicePause? pause)
+    {
+        var changed = (DevicePause == null) != (pause == null);
+        DevicePause = pause;
+        if (changed || pause != null)
+        {
+            DevicePauseChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// "Use this device instead": the panel makes this device the active one and pauses
+    /// the other(s). Afterwards connection settings can be fetched again.
+    /// </summary>
+    public async Task ActivateThisDeviceAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_session.RegisteredDeviceId))
+        {
+            await EnsureDeviceRegisteredAsync(force: true);
+        }
+        await ActivateDeviceAsync(_session.RegisteredDeviceId);
+    }
+
+    /// <summary>
+    /// Makes a paused device the active one (the panel pauses another to stay within the
+    /// plan): POST /devices/{id}/activate with the bearer token and X-Device-ID.
+    /// </summary>
+    public async Task ActivateDeviceAsync(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            throw new ColituApiException(HttpStatusCode.Conflict, Loc.I["err.generic"], "DEVICE_NOT_REGISTERED");
+        }
+        using (await SendAuthorizedRequestAsync(() => JsonRequest(HttpMethod.Post, $"/devices/{Uri.EscapeDataString(id)}/activate", new { })))
+        {
+        }
+        if (string.Equals(id, _session.RegisteredDeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            SetDevicePause(null);
+        }
+        try
+        {
+            await LoadMeAsync();
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituAuthService.ActivateThisDevice account refresh", ex);
+        }
+    }
+
     private ColituAuthService()
     {
         ApiBaseUrl = ResolveApiBaseUrl();
@@ -137,6 +194,11 @@ public sealed class ColituAuthService
             MarkVerificationPending();
             return ColituStartupState.VerificationRequired;
         }
+        catch (ColituApiException ex) when (ex.ErrorCode is ColituDevicePause.ErrorCode)
+        {
+            // Signed in, but this device is paused: the app shows the paused screen.
+            return ColituStartupState.SignedIn;
+        }
         catch (ColituApiException ex) when (ex.Terminal || ex.ErrorCode is "SESSION_EXPIRED")
         {
             ClearSession();
@@ -151,9 +213,30 @@ public sealed class ColituAuthService
         }
     }
 
+    /// <summary>
+    /// Tells the panel this app can show the two-factor code step; without it an account
+    /// with 2FA gets MFA_REQUIRED_UPDATE_APP instead of a challenge.
+    /// </summary>
+    public const string FeaturesHeader = "X-Colitu-Features";
+    public const string FeaturesValue = "mfa";
+
+    /// <summary>
+    /// Signs in with e-mail and password. An account with two-factor authentication
+    /// answers with a challenge (<see cref="ColituAuthResult.RequiresMfa"/>): finish
+    /// with <see cref="CompleteMfaLoginAsync"/>.
+    /// </summary>
     public async Task<ColituAuthResult> LoginAsync(string email, string password)
     {
-        return await AuthenticateAsync("/auth/login", new { email = email.Trim(), password }, email.Trim(), sendCode: true);
+        return await AuthenticateAsync("/auth/login", new { email = email.Trim(), password }, email.Trim(), sendCode: true, mfaCapable: true);
+    }
+
+    /// <summary>
+    /// Second sign-in step: the 6-digit code from the authenticator app, or a recovery
+    /// code. Success is the same as a successful <see cref="LoginAsync"/>.
+    /// </summary>
+    public async Task<ColituAuthResult> CompleteMfaLoginAsync(string mfaToken, string code, string email)
+    {
+        return await AuthenticateAsync("/auth/login/mfa", new { mfa_token = mfaToken, code = code.Trim() }, email.Trim(), sendCode: true, mfaCapable: true);
     }
 
     public async Task<ColituAuthResult> RegisterAsync(string name, string email, string password)
@@ -176,7 +259,7 @@ public sealed class ColituAuthService
     /// </summary>
     public async Task<ColituAuthResult> ResetPasswordAsync(string email, string code, string password)
     {
-        return await AuthenticateAsync("/auth/password/reset", new { email = email.Trim(), code = code.Trim(), password }, email.Trim(), sendCode: true);
+        return await AuthenticateAsync("/auth/password/reset", new { email = email.Trim(), code = code.Trim(), password }, email.Trim(), sendCode: true, mfaCapable: true);
     }
 
     /// <summary>True while the signed-in account still has to confirm its e-mail address.</summary>
@@ -253,7 +336,8 @@ public sealed class ColituAuthService
                     Name = string.IsNullOrWhiteSpace(device.Name) ? "Device" : device.Name.Trim(),
                     Platform = device.Platform,
                     Current = string.Equals(device.Id, currentId, StringComparison.OrdinalIgnoreCase),
-                    LastActiveAt = device.LastSeenAt ?? device.CreatedAt
+                    LastActiveAt = device.LastSeenAt ?? device.CreatedAt,
+                    Paused = device.SuspendedAt != null
                 })
                 .ToList()
         };
@@ -354,11 +438,16 @@ public sealed class ColituAuthService
         ClearSession();
     }
 
-    private async Task<ColituAuthResult> AuthenticateAsync(string path, object body, string email, bool sendCode)
+    private async Task<ColituAuthResult> AuthenticateAsync(string path, object body, string email, bool sendCode, bool mfaCapable = false)
     {
         try
         {
-            using var response = await SendClientJsonAsync(HttpMethod.Post, path, body);
+            using var response = await SendClientJsonAsync(HttpMethod.Post, path, body, mfaCapable: mfaCapable);
+            if (mfaCapable && response.StatusCode == HttpStatusCode.Forbidden
+                && ParseMfaChallenge(response.StatusCode, await response.Content.ReadAsStringAsync()) is { } challenge)
+            {
+                return ColituAuthResult.Mfa(email, challenge.Token, challenge.ExpiresInSeconds);
+            }
             await EnsureSuccessAsync(response);
             var tokens = await ReadJsonAsync<ColituTokenDto>(response);
             if (string.IsNullOrWhiteSpace(tokens?.AccessToken) || string.IsNullOrWhiteSpace(tokens.RefreshToken))
@@ -396,6 +485,15 @@ public sealed class ColituAuthService
                 }
                 return ColituAuthResult.Verification(email);
             }
+            catch (ColituApiException ex) when (ex.ErrorCode is ColituDevicePause.ErrorCode)
+            {
+                // The password was right but the plan's devices are taken: keep the session so
+                // the paused screen can offer "Use this device instead".
+                CurrentUser ??= new ColituUser { Email = email, Name = DisplayNameFromEmail(email) };
+                _session.PendingEmail = null;
+                PersistSession();
+                return ColituAuthResult.Ok(CurrentUser);
+            }
             catch
             {
                 ClearSession();
@@ -406,7 +504,48 @@ public sealed class ColituAuthService
         }
         catch (Exception ex)
         {
-            return ColituAuthResult.Fail(UserMessage(ex));
+            return ColituAuthResult.Fail(UserMessage(ex), (ex as ColituApiException)?.ErrorCode);
+        }
+    }
+
+    /// <summary>
+    /// Reads a two-factor challenge: HTTP 403 with error code MFA_REQUIRED and an
+    /// mfa_token. Null for any other answer (MFA_REQUIRED_UPDATE_APP included).
+    /// </summary>
+    internal static ColituMfaChallenge? ParseMfaChallenge(HttpStatusCode status, string? body)
+    {
+        if (status != HttpStatusCode.Forbidden || string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error))
+            {
+                return null;
+            }
+            var code = error.ValueKind switch
+            {
+                JsonValueKind.Object when error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String => c.GetString(),
+                JsonValueKind.String => error.GetString(),
+                _ => null
+            };
+            if (code != "MFA_REQUIRED"
+                || !root.TryGetProperty("mfa_token", out var tokenElement) || tokenElement.ValueKind != JsonValueKind.String
+                || tokenElement.GetString() is not { Length: > 0 } token)
+            {
+                return null;
+            }
+            var expiresIn = root.TryGetProperty("mfa_expires_in", out var expires) && expires.TryGetInt32(out var seconds) && seconds > 0
+                ? seconds
+                : 300;
+            return new ColituMfaChallenge(token, expiresIn);
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
@@ -516,11 +655,16 @@ public sealed class ColituAuthService
             Unlimited = active && limitBytes == null,
             Tier = active ? "premium" : "free",
             DeviceLimit = entitlement?.DeviceLimit ?? entitlement?.Devices?.Limit ?? 1,
-            DevicesUsed = entitlement?.Devices?.Used ?? 0,
             ExpiresAt = entitlement?.ExpiresAt,
             TrafficLimitBytes = limitBytes,
             TrafficUsedBytes = entitlement?.Traffic?.UsedBytes ?? 0,
-            TrafficRemainingBytes = entitlement?.Traffic?.RemainingBytes
+            TrafficRemainingBytes = entitlement?.Traffic?.RemainingBytes,
+            EndsAt = entitlement?.Text("ends_at") ?? entitlement?.ExpiresAt,
+            NextPlan = entitlement?.NextPlanName(),
+            NextDeviceLimit = entitlement?.NextDeviceLimit(),
+            NextTrafficLimitBytes = entitlement?.NextTrafficLimitBytes(),
+            DeviceCount = entitlement?.Devices?.Registered ?? entitlement?.Int("device_count", "devices_count", "registered_devices") ?? entitlement?.Devices?.Used,
+            DevicesUsed = entitlement?.Devices?.Active ?? entitlement?.Devices?.Used ?? 0
         };
     }
 
@@ -667,10 +811,14 @@ public sealed class ColituAuthService
             terminal: true);
     }
 
-    private async Task<HttpResponseMessage> SendClientJsonAsync(HttpMethod method, string path, object body, bool includeDevice = false)
+    private async Task<HttpResponseMessage> SendClientJsonAsync(HttpMethod method, string path, object body, bool includeDevice = false, bool mfaCapable = false)
     {
         var request = JsonRequest(method, path, body);
         AddClientHeaders(request, includeDevice);
+        if (mfaCapable)
+        {
+            request.Headers.TryAddWithoutValidation(FeaturesHeader, FeaturesValue);
+        }
         return await _httpClient.SendAsync(request);
     }
 
@@ -758,6 +906,7 @@ public sealed class ColituAuthService
         PendingVerification = false;
         CurrentUser = null;
         CurrentSubscription = null;
+        SetDevicePause(null);
         try
         {
             if (File.Exists(SessionPath())) File.Delete(SessionPath());
@@ -891,7 +1040,32 @@ public sealed class ColituAuthService
 
         var terminal = code is "AUTH_REFRESH_REUSED" or "DEVICE_REVOKED" or "DEVICE_TOKEN_MISMATCH";
         int? retryAfter = response.Headers.RetryAfter?.Delta is { } delta ? (int)delta.TotalSeconds : null;
-        throw new ColituApiException(response.StatusCode, FriendlyMessage(code, message, response.StatusCode), code, retryAfter, terminal);
+        if (code == "MFA_INVALID_CODE" && AttemptsLeft(body) is int attempts)
+        {
+            throw new ColituApiException(response.StatusCode, Loc.I.Format("mfa.err.invalidLeft", ("n", attempts)), code, null, false);
+        }
+        ColituDevicePause? pause = null;
+        if (code == ColituDevicePause.ErrorCode)
+        {
+            pause = ColituDevicePause.Parse(body);
+            Instance.SetDevicePause(pause);
+        }
+        throw new ColituApiException(response.StatusCode, FriendlyMessage(code, message, response.StatusCode), code, retryAfter, terminal) { DevicePause = pause };
+    }
+
+    /// <summary>attempts_left of a wrong 2FA code, when the panel sends it.</summary>
+    internal static int? AttemptsLeft(string? body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body ?? "");
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("attempts_left", out var value)
+                && value.TryGetInt32(out var attempts) && attempts >= 0 ? attempts : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     internal static string FriendlyMessage(string? code, string? message, HttpStatusCode status)
@@ -900,6 +1074,11 @@ public sealed class ColituAuthService
         return code switch
         {
             "AUTH_INVALID_CREDENTIALS" => loc["err.credentials"],
+            "MFA_INVALID_CODE" => loc["mfa.err.invalid"],
+            "MFA_TOKEN_EXPIRED" => loc["mfa.err.expired"],
+            "MFA_REQUIRED" => loc["mfa.err.required"],
+            "MFA_REQUIRED_UPDATE_APP" => loc["mfa.err.updateApp"],
+            ColituDevicePause.ErrorCode => loc["err.devicePaused"],
             "INVALID_REGISTRATION" => loc["err.registration"],
             "RATE_LIMITED" => loc["err.rateLimited"],
             "DEVICE_LIMIT_REACHED" or "DEVICE_LIMIT_EXCEEDED" => loc["err.deviceLimit"],
@@ -981,6 +1160,12 @@ public sealed class ColituAuthResult
 {
     public bool Success { get; init; }
     public string? Error { get; init; }
+    /// <summary>The panel's error code (MFA_INVALID_CODE, RATE_LIMITED, …) when there was one.</summary>
+    public string? ErrorCode { get; init; }
+    /// <summary>The password was right; the account wants its second factor (<see cref="MfaToken"/>).</summary>
+    public bool RequiresMfa { get; init; }
+    public string? MfaToken { get; init; }
+    public int MfaExpiresInSeconds { get; init; }
     public ColituUser? User { get; init; }
     public bool RequiresEmailVerification { get; init; }
     public bool? VerificationEmailSent { get; init; }
@@ -993,7 +1178,8 @@ public sealed class ColituAuthResult
         VerificationEmailSent = verificationEmailSent,
         Message = message
     };
-    public static ColituAuthResult Fail(string error) => new() { Success = false, Error = error };
+    public static ColituAuthResult Fail(string error, string? errorCode = null) => new() { Success = false, Error = error, ErrorCode = errorCode };
+    public static ColituAuthResult Mfa(string email, string token, int expiresInSeconds) => new() { Success = true, RequiresMfa = true, MfaToken = token, MfaExpiresInSeconds = expiresInSeconds, Message = email };
     public static ColituAuthResult Verification(string email) => new() { Success = true, RequiresEmailVerification = true, Message = email };
 }
 
@@ -1033,6 +1219,14 @@ public sealed class ColituSubscription
     public long? TrafficLimitBytes { get; set; }
     public long TrafficUsedBytes { get; set; }
     public long? TrafficRemainingBytes { get; set; }
+    /// <summary>When the current trial or plan ends (ends_at; expires_at otherwise).</summary>
+    public string? EndsAt { get; set; }
+    /// <summary>The plan the account moves to afterwards ("free"), when the panel says.</summary>
+    public string? NextPlan { get; set; }
+    public int? NextDeviceLimit { get; set; }
+    public long? NextTrafficLimitBytes { get; set; }
+    /// <summary>Devices on the account, when the panel says.</summary>
+    public int? DeviceCount { get; set; }
 }
 
 public sealed class ColituFreeQuota
@@ -1048,7 +1242,12 @@ public sealed class ColituDevice
     public bool Current { get; set; }
     public string? Platform { get; set; }
     public string? LastActiveAt { get; set; }
+    /// <summary>Paused by the plan's device limit (suspended_at); it can be activated instead of another.</summary>
+    public bool Paused { get; set; }
 }
+
+/// <summary>Second sign-in step: the token that stands for the checked password, valid for a few minutes.</summary>
+public sealed record ColituMfaChallenge(string Token, int ExpiresInSeconds);
 
 public sealed class ColituApiException(HttpStatusCode statusCode, string message, string? errorCode = null) : Exception(message)
 {
@@ -1058,6 +1257,9 @@ public sealed class ColituApiException(HttpStatusCode statusCode, string message
 
     /// <summary>True when the API marked the failure unrecoverable (re-login required).</summary>
     public bool Terminal { get; }
+
+    /// <summary>Details of DEVICE_OVER_LIMIT (this device is paused); null for other errors.</summary>
+    public ColituDevicePause? DevicePause { get; init; }
 
     public ColituApiException(HttpStatusCode statusCode, string message, string? errorCode, int? retryAfterSeconds, bool terminal = false) : this(statusCode, message, errorCode)
     {
@@ -1120,6 +1322,8 @@ internal sealed class ColituDeviceDto
     [JsonPropertyName("created_at")] public string? CreatedAt { get; set; }
     [JsonPropertyName("last_seen_at")] public string? LastSeenAt { get; set; }
     [JsonPropertyName("revoked_at")] public string? RevokedAt { get; set; }
+    [JsonPropertyName("suspended_at")] public string? SuspendedAt { get; set; }
+    [JsonPropertyName("suspended_reason")] public string? SuspendedReason { get; set; }
 }
 
 internal sealed class ColituDeviceListDto
@@ -1135,6 +1339,119 @@ internal sealed class ColituEntitlementDto
     [JsonPropertyName("device_limit")] public int? DeviceLimit { get; set; }
     [JsonPropertyName("traffic")] public ColituTrafficDto? Traffic { get; set; }
     [JsonPropertyName("devices")] public ColituDeviceCountDto? Devices { get; set; }
+
+    /// <summary>
+    /// Newer fields (ends_at, next_plan, next_device_limit, device_count, …) are read from
+    /// here, tolerantly: a missing or differently typed field is simply unknown.
+    /// </summary>
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+
+    internal string? Text(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (Extra != null && Extra.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text)
+            {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    internal int? Int(params string[] names) => Number(Extra, names) is double value && value >= 0 && value <= int.MaxValue ? (int)value : null;
+
+    /// <summary>"free", from next_plan as a string or as an object with a name.</summary>
+    internal string? NextPlanName()
+    {
+        if (Extra == null || !Extra.TryGetValue("next_plan", out var next))
+        {
+            return null;
+        }
+        return next.ValueKind switch
+        {
+            JsonValueKind.String => next.GetString(),
+            JsonValueKind.Object => StringIn(next, "name", "plan", "id", "code"),
+            _ => null
+        };
+    }
+
+    internal int? NextDeviceLimit()
+    {
+        var direct = Int("next_device_limit");
+        if (direct != null)
+        {
+            return direct;
+        }
+        return NextPlanObject() is { } plan && Number(plan, "device_limit") is double value && value >= 0 ? (int)value : null;
+    }
+
+    internal long? NextTrafficLimitBytes()
+    {
+        if (Number(Extra, "next_traffic_limit_bytes", "next_limit_bytes", "next_monthly_limit_bytes") is double bytes && bytes > 0)
+        {
+            return (long)bytes;
+        }
+        if (Number(Extra, "next_traffic_limit_gb", "next_traffic_gb", "next_monthly_gb") is double gb && gb > 0)
+        {
+            return (long)(gb * 1_000_000_000);
+        }
+        if (NextPlanObject() is { } plan)
+        {
+            if (Number(plan, "traffic_limit_bytes", "limit_bytes", "monthly_limit_bytes") is double planBytes && planBytes > 0)
+            {
+                return (long)planBytes;
+            }
+            if (Number(plan, "traffic_limit_gb", "traffic_gb", "monthly_gb") is double planGb && planGb > 0)
+            {
+                return (long)(planGb * 1_000_000_000);
+            }
+        }
+        return null;
+    }
+
+    private Dictionary<string, JsonElement>? NextPlanObject()
+    {
+        if (Extra == null || !Extra.TryGetValue("next_plan", out var next) || next.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        return next.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone());
+    }
+
+    private static string? StringIn(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString();
+            }
+        }
+        return null;
+    }
+
+    private static double? Number(Dictionary<string, JsonElement>? fields, params string[] names)
+    {
+        if (fields == null)
+        {
+            return null;
+        }
+        foreach (var name in names)
+        {
+            if (fields.TryGetValue(name, out var value))
+            {
+                if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
+                {
+                    return number;
+                }
+                if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+        }
+        return null;
+    }
 }
 
 internal sealed class ColituTrafficDto
@@ -1152,4 +1469,7 @@ internal sealed class ColituDeviceCountDto
 {
     [JsonPropertyName("used")] public int Used { get; set; }
     [JsonPropertyName("limit")] public int? Limit { get; set; }
+    [JsonPropertyName("active")] public int? Active { get; set; }
+    [JsonPropertyName("suspended")] public int? Suspended { get; set; }
+    [JsonPropertyName("registered")] public int? Registered { get; set; }
 }

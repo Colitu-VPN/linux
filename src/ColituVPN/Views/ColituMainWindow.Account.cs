@@ -11,6 +11,10 @@ public partial class ColituMainWindow
     private void WireAccount()
     {
         ManageAccountButton.Click += (_, _) => OpenUrl(LocalizedPath("/account"));
+        // Two-factor authentication is set up on the website only.
+        SecurityButton.Click += (_, _) => OpenUrl(LocalizedPath("/account/security"));
+        // Config export (VLESS/Hysteria2 links for other clients) lives on the website for now.
+        ManualConfigButton.Click += (_, _) => OpenUrl(ManualConfigUrl);
         SupportButton.Click += (_, _) => Navigate("support");
         MailSupportButton.Click += (_, _) => OpenUrl($"mailto:{ColituAuthService.SupportEmail}");
         SettingsStartup.IsCheckedChanged += async (_, _) => await StartupChangedAsync();
@@ -33,6 +37,8 @@ public partial class ColituMainWindow
         ConfirmCancelButton.Click += (_, _) => CloseConfirm(false);
     }
 
+    private const string ManualConfigUrl = "https://colitu.com/account/manual-config";
+
     // ── Devices ────────────────────────────────────────────────────────────
     private async Task LoadDevicesAsync()
     {
@@ -52,6 +58,7 @@ public partial class ColituMainWindow
                     Id = device.Id ?? "",
                     Name = device.Name ?? "",
                     IsCurrent = device.Current,
+                    IsPaused = device.Paused,
                     Detail = string.Join(" · ", new[]
                     {
                         PlatformName(device.Platform),
@@ -66,6 +73,28 @@ public partial class ColituMainWindow
         catch (Exception ex)
         {
             Logging.SaveLog("ColituMainWindow.LoadDevicesAsync", ex);
+        }
+    }
+
+    private async void ActivateDevice_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ColituDeviceRow device })
+        {
+            return;
+        }
+        try
+        {
+            await _auth.ActivateDeviceAsync(device.Id);
+            ShowToast(Loc.I["account.activated"]);
+            await LoadDevicesAsync();
+            if (device.IsCurrent)
+            {
+                await ContinueAfterPauseAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex is ColituApiException api ? api.Message : Loc.I["err.network"], true);
         }
     }
 
@@ -270,4 +299,5 @@ public sealed class ColituDeviceRow
     public string Name { get; init; } = "";
     public string Detail { get; init; } = "";
     public bool IsCurrent { get; init; }
+    public bool IsPaused { get; init; }
 }

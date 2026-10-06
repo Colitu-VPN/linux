@@ -22,29 +22,79 @@
     <Window.Resources>
         <!-- Round flag: the country's square flag clipped to a circle. -->
         <DataTemplate x:Key="FlagTemplate" x:DataType="v:ColituServerRow">
-            <Panel Width="34" Height="34">
-                <Ellipse Fill="{StaticResource IconWellBrush}" />
-                <Border
+            <Panel>
+                <Panel
                     Width="34"
                     Height="34"
-                    ClipToBounds="True"
-                    CornerRadius="17"
-                    IsVisible="{Binding HasFlag}">
-                    <Image Source="{Binding FlagBitmap}" Stretch="UniformToFill" />
-                </Border>
-                <Path
-                    Width="15"
-                    Height="15"
-                    Data="{StaticResource IconBolt}"
-                    Fill="{StaticResource LilacBrush}"
-                    IsVisible="{Binding IsAuto}"
-                    Stretch="Uniform" />
-                <Ellipse Stroke="#26FFFFFF" StrokeThickness="1" />
+                    IsVisible="{Binding IsSingleFlag}">
+                    <Ellipse Fill="{StaticResource IconWellBrush}" />
+                    <Border
+                        Width="34"
+                        Height="34"
+                        ClipToBounds="True"
+                        CornerRadius="17"
+                        IsVisible="{Binding HasFlag}">
+                        <Image Source="{Binding FlagBitmap}" Stretch="UniformToFill" />
+                    </Border>
+                    <Path
+                        Width="15"
+                        Height="15"
+                        Data="{StaticResource IconBolt}"
+                        Fill="{StaticResource LilacBrush}"
+                        IsVisible="{Binding IsAuto}"
+                        Stretch="Uniform" />
+                    <Ellipse Stroke="#26FFFFFF" StrokeThickness="1" />
+                </Panel>
+                <!-- Multihop route: two overlapping round flags, the entry node first, then the exit node. -->
+                <Panel
+                    Width="56"
+                    Height="34"
+                    IsVisible="{Binding IsMultihop}">
+                    <Panel
+                        Width="30"
+                        Height="30"
+                        HorizontalAlignment="Left">
+                        <Ellipse Fill="{StaticResource IconWellBrush}" />
+                        <Border
+                            Width="30"
+                            Height="30"
+                            ClipToBounds="True"
+                            CornerRadius="15">
+                            <Image Source="{Binding EntryFlagBitmap}" Stretch="UniformToFill" />
+                        </Border>
+                        <Ellipse Stroke="#26FFFFFF" StrokeThickness="1" />
+                    </Panel>
+                    <Panel
+                        Width="30"
+                        Height="30"
+                        HorizontalAlignment="Right">
+                        <Ellipse Fill="{StaticResource IconWellBrush}" />
+                        <Border
+                            Width="30"
+                            Height="30"
+                            ClipToBounds="True"
+                            CornerRadius="15">
+                            <Image Source="{Binding ExitFlagBitmap}" Stretch="UniformToFill" />
+                        </Border>
+                        <Ellipse Stroke="#26FFFFFF" StrokeThickness="1" />
+                    </Panel>
+                </Panel>
             </Panel>
         </DataTemplate>
 
         <DataTemplate x:Key="ServerRowTemplate" x:DataType="v:ColituServerRow">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+            <Panel>
+            <!-- A section title in the locations list (e.g. Multihop): no card, not selectable. -->
+            <StackPanel Margin="4,0,0,0" IsVisible="{Binding IsHeader}">
+                <TextBlock Classes="kicker" Text="{Binding Title}" />
+                <TextBlock
+                    Margin="0,4,0,0"
+                    Classes="small"
+                    IsVisible="{Binding HasHeaderHint}"
+                    Text="{Binding HeaderHint}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsRow}">
                 <ContentControl Content="{Binding}" ContentTemplate="{StaticResource FlagTemplate}" />
                 <StackPanel
                     Grid.Column="1"
@@ -86,15 +136,23 @@
                     IsVisible="{Binding PingVisible}"
                     Orientation="Horizontal"
                     ToolTip.Tip="{Binding PingToolTip}">
-                    <TextBlock
-                        MinWidth="52"
-                        Margin="0,0,10,0"
-                        VerticalAlignment="Center"
-                        FontSize="13"
-                        FontWeight="SemiBold"
-                        Foreground="{Binding PingTextBrush}"
-                        Text="{Binding PingText}"
-                        TextAlignment="Right" />
+                    <StackPanel Margin="0,0,10,0" VerticalAlignment="Center">
+                        <TextBlock
+                            MinWidth="52"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            Foreground="{Binding PingTextBrush}"
+                            Text="{Binding PingText}"
+                            TextAlignment="Right" />
+                        <!-- A route's ping is measured to its entry node only. -->
+                        <TextBlock
+                            Margin="0,1,0,0"
+                            FontSize="10.5"
+                            Foreground="{StaticResource MutedBrush}"
+                            IsVisible="{Binding HasPingNote}"
+                            Text="{Binding PingNote}"
+                            TextAlignment="Right" />
+                    </StackPanel>
                     <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
                         <Border
                             Width="4"
@@ -131,6 +189,7 @@
                         Text="{Binding StateText}" />
                 </Border>
             </Grid>
+            </Panel>
         </DataTemplate>
 
         <DataTemplate x:Key="SupportRowTemplate" x:DataType="v:ColituSupportRow">
@@ -718,6 +777,111 @@
                 </Border>
             </Panel>
 
+            <!-- ── Two-factor code (second sign-in step; 2FA is set up on colitu.com) ── -->
+            <Panel x:Name="MfaView" IsVisible="False">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <Border
+                        Width="468"
+                        Margin="0,36"
+                        Padding="38,36"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Classes="panel">
+                        <StackPanel x:Name="MfaCard">
+                            <Panel
+                                Width="64"
+                                Height="64"
+                                HorizontalAlignment="Left">
+                                <Ellipse
+                                    Fill="{StaticResource IconWellBrush}"
+                                    Stroke="{StaticResource LineStrongBrush}"
+                                    StrokeThickness="1" />
+                                <Path
+                                    Width="26"
+                                    Height="26"
+                                    Data="{StaticResource IconShield}"
+                                    Stretch="Uniform"
+                                    Stroke="{StaticResource LilacBrush}"
+                                    StrokeJoin="Round"
+                                    StrokeThickness="1.8" />
+                            </Panel>
+                            <TextBlock
+                                Margin="0,24,0,0"
+                                Classes="kicker"
+                                Text="{s:T mfa.kicker}" />
+                            <TextBlock
+                                Margin="0,10,0,0"
+                                Classes="h1"
+                                Text="{s:T mfa.title}" />
+                            <TextBlock
+                                x:Name="MfaSubtitle"
+                                Margin="0,10,0,0"
+                                Classes="muted" />
+                            <TextBlock
+                                x:Name="MfaCodeLabel"
+                                Margin="2,26,0,8"
+                                Classes="fieldLabel" />
+                            <Border Classes="field">
+                                <TextBox
+                                    x:Name="MfaCodeBox"
+                                    Height="66"
+                                    Classes="bare"
+                                    FontSize="30"
+                                    FontWeight="SemiBold"
+                                    MaxLength="64"
+                                    TextAlignment="Center" />
+                            </Border>
+                            <TextBlock
+                                x:Name="MfaRecoveryHint"
+                                Margin="2,8,0,0"
+                                Classes="small"
+                                IsVisible="False"
+                                Text="{s:T mfa.recoveryHint}" />
+                            <Border
+                                x:Name="MfaErrorBox"
+                                Margin="0,16,0,0"
+                                Classes="errorBox"
+                                IsVisible="False">
+                                <TextBlock x:Name="MfaErrorText" Classes="errorText" />
+                            </Border>
+                            <Button
+                                x:Name="MfaSubmitButton"
+                                Height="52"
+                                Margin="0,20,0,0"
+                                HorizontalAlignment="Stretch"
+                                Theme="{StaticResource PrimaryButton}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse
+                                        x:Name="MfaSpinner"
+                                        Margin="0,0,10,0"
+                                        Classes="spinner onAccent"
+                                        IsVisible="False" />
+                                    <TextBlock FontSize="15.5" Text="{s:T mfa.submit}" />
+                                </StackPanel>
+                            </Button>
+                            <Grid Margin="0,18,0,0" ColumnDefinitions="Auto,*">
+                                <Button
+                                    x:Name="MfaRecoveryButton"
+                                    HorizontalAlignment="Left"
+                                    Theme="{StaticResource LinkButton}">
+                                    <TextBlock x:Name="MfaRecoveryText" />
+                                </Button>
+                                <Button
+                                    x:Name="MfaBackButton"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    Content="{s:T mfa.back}"
+                                    Theme="{StaticResource LinkButton}" />
+                            </Grid>
+                            <TextBlock
+                                Margin="0,20,0,0"
+                                Classes="small"
+                                Text="{s:T mfa.hint}" />
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
+            </Panel>
+
             <!-- ── Signed-in app ───────────────────────────────────────────── -->
             <Grid
                 x:Name="AppView"
@@ -1033,6 +1197,36 @@
                                     IsVisible="False">
                                     <TextBlock x:Name="ProtocolChipText" Classes="chipText" />
                                 </Border>
+                                <!-- Multihop: "Entry FI to Exit DE"; rotating IP: current exit and the countdown to the next change. -->
+                                <Border
+                                    x:Name="RouteChip"
+                                    Margin="0,10,0,0"
+                                    HorizontalAlignment="Center"
+                                    Classes="chip"
+                                    IsVisible="False">
+                                    <TextBlock x:Name="RouteChipText" Classes="chipText" />
+                                </Border>
+                                <Border
+                                    x:Name="SplitChip"
+                                    Margin="0,10,0,0"
+                                    HorizontalAlignment="Center"
+                                    Classes="chip"
+                                    Cursor="Hand"
+                                    IsVisible="False">
+                                    <TextBlock x:Name="SplitChipText" Classes="chipText" />
+                                </Border>
+                                <Border
+                                    x:Name="ProxyCoverageWarning"
+                                    MaxWidth="460"
+                                    Margin="0,12,0,0"
+                                    HorizontalAlignment="Center"
+                                    Classes="warnBox"
+                                    IsVisible="False">
+                                    <TextBlock
+                                        Classes="warnText"
+                                        Text="{s:T proxy.warnShort}"
+                                        TextAlignment="Center" />
+                                </Border>
                                 <Button
                                     x:Name="UnblockButton"
                                     Margin="0,12,0,0"
@@ -1048,6 +1242,32 @@
                             HorizontalScrollBarVisibility="Disabled"
                             VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="HomeCards">
+                                <!-- End of the trial or plan (closable for the day) -->
+                                <Border
+                                    x:Name="PlanNoticeBanner"
+                                    Margin="0,0,0,16"
+                                    Classes="warnBox"
+                                    IsVisible="False">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock
+                                            x:Name="PlanNoticeText"
+                                            VerticalAlignment="Center"
+                                            Classes="warnText" />
+                                        <Button
+                                            x:Name="PlanNoticeClose"
+                                            Grid.Column="1"
+                                            Margin="10,0,0,0"
+                                            VerticalAlignment="Top"
+                                            Theme="{StaticResource IconButton}"
+                                            ToolTip.Tip="{s:T planEnd.hide}">
+                                            <Path
+                                                Width="11"
+                                                Height="11"
+                                                Classes="stroke"
+                                                Data="{StaticResource IconX}" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
                                 <!-- Location -->
                                 <Border
                                     x:Name="LocationCard"
@@ -1210,6 +1430,13 @@
                                                     Tag="tun"
                                                     Theme="{StaticResource SegmentOption}" />
                                             </UniformGrid>
+                                        </Border>
+                                        <Border
+                                            x:Name="HomeProxyWarning"
+                                            Margin="0,12,0,0"
+                                            Classes="warnBox"
+                                            IsVisible="False">
+                                            <TextBlock Classes="warnText" Text="{s:T proxy.warn}" />
                                         </Border>
                                         <Grid
                                             MinHeight="44"
@@ -1521,6 +1748,22 @@
                                                     <TextBlock FontSize="13.5" Text="{s:T account.manage}" />
                                                 </Button>
                                                 <Button
+                                                    x:Name="SecurityButton"
+                                                    Height="42"
+                                                    Margin="0,0,10,10"
+                                                    Padding="18,0"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock FontSize="13.5" Text="{s:T account.security}" />
+                                                </Button>
+                                                <Button
+                                                    x:Name="ManualConfigButton"
+                                                    Height="42"
+                                                    Margin="0,0,10,10"
+                                                    Padding="18,0"
+                                                    Theme="{StaticResource SecondaryButton}">
+                                                    <TextBlock FontSize="13.5" Text="{s:T account.manualConfig}" />
+                                                </Button>
+                                                <Button
                                                     x:Name="SignOutButton"
                                                     Height="42"
                                                     Margin="0,0,10,10"
@@ -1614,6 +1857,18 @@
                                                                             FontSize="9.5"
                                                                             Text="{s:T account.thisDevice}" />
                                                                     </Border>
+                                                                    <Border
+                                                                        Margin="8,0,0,0"
+                                                                        Padding="7,2"
+                                                                        Background="#33F5C36B"
+                                                                        CornerRadius="999"
+                                                                        IsVisible="{Binding IsPaused}">
+                                                                        <TextBlock
+                                                                            FontSize="9.5"
+                                                                            FontWeight="Bold"
+                                                                            Foreground="{StaticResource WarnTextBrush}"
+                                                                            Text="{s:T account.paused}" />
+                                                                    </Border>
                                                                 </StackPanel>
                                                                 <TextBlock
                                                                     Margin="0,2,0,0"
@@ -1621,8 +1876,16 @@
                                                                     Foreground="{StaticResource MutedBrush}"
                                                                     Text="{Binding Detail}" />
                                                             </StackPanel>
+                                                            <StackPanel Grid.Column="2" Orientation="Horizontal">
                                                             <Button
-                                                                Grid.Column="2"
+                                                                Margin="0,0,6,0"
+                                                                VerticalAlignment="Center"
+                                                                Click="ActivateDevice_Click"
+                                                                Content="{s:T account.activate}"
+                                                                IsVisible="{Binding IsPaused}"
+                                                                Tag="{Binding}"
+                                                                Theme="{StaticResource LinkButton}" />
+                                                            <Button
                                                                 Click="RemoveDevice_Click"
                                                                 Tag="{Binding}"
                                                                 Theme="{StaticResource IconButton}"
@@ -1633,6 +1896,7 @@
                                                                     Classes="stroke"
                                                                     Data="{StaticResource IconX}" />
                                                             </Button>
+                                                            </StackPanel>
                                                         </Grid>
                                                     </Border>
                                                 </DataTemplate>
@@ -1685,6 +1949,13 @@
                                                 x:Name="ModeHint"
                                                 Margin="2,10,0,0"
                                                 Classes="small" />
+                                            <Border
+                                                x:Name="SettingsProxyWarning"
+                                                Margin="0,12,0,0"
+                                                Classes="warnBox"
+                                                IsVisible="False">
+                                                <TextBlock Classes="warnText" Text="{s:T proxy.warn}" />
+                                            </Border>
 
                                             <Grid Margin="0,22,0,0" ColumnDefinitions="*,Auto">
                                                 <StackPanel Margin="0,0,16,0">
@@ -1921,6 +2192,170 @@
                                     </Border>
                                 </StackPanel>
                             </Grid>
+
+                            <!-- Split tunneling -->
+                            <Border
+                                Margin="0,16,0,0"
+                                Padding="24"
+                                Classes="panel">
+                                <StackPanel>
+                                    <TextBlock Classes="h2" Text="{s:T settings.split}" />
+                                    <TextBlock
+                                        Margin="0,6,0,0"
+                                        Classes="small"
+                                        Text="{s:T settings.split.hint}" />
+                                    <Border Margin="0,16,0,0" Classes="segmentHost">
+                                        <UniformGrid Rows="1">
+                                            <RadioButton
+                                                x:Name="SplitModeOff"
+                                                Content="{s:T settings.split.off}"
+                                                GroupName="SplitMode"
+                                                Tag="off"
+                                                Theme="{StaticResource SegmentOption}" />
+                                            <RadioButton
+                                                x:Name="SplitModeExclude"
+                                                Content="{s:T settings.split.exclude}"
+                                                GroupName="SplitMode"
+                                                Tag="exclude"
+                                                Theme="{StaticResource SegmentOption}" />
+                                            <RadioButton
+                                                x:Name="SplitModeInclude"
+                                                Content="{s:T settings.split.include}"
+                                                GroupName="SplitMode"
+                                                Tag="include"
+                                                Theme="{StaticResource SegmentOption}" />
+                                        </UniformGrid>
+                                    </Border>
+                                    <StackPanel x:Name="SplitLists" IsVisible="False">
+                                        <Border
+                                            x:Name="SplitProxyNote"
+                                            Margin="0,14,0,0"
+                                            Classes="warnBox">
+                                            <TextBlock Classes="warnText" Text="{s:T settings.split.proxyNote}" />
+                                        </Border>
+                                        <Border
+                                            x:Name="SplitIncludeNote"
+                                            Margin="0,14,0,0"
+                                            Classes="warnBox">
+                                            <TextBlock Classes="warnText" Text="{s:T settings.split.includeNote}" />
+                                        </Border>
+                                        <Grid Margin="0,16,0,0" ColumnDefinitions="*,16,*,16,*">
+                                            <StackPanel>
+                                                <TextBlock
+                                                    Margin="2,0,0,8"
+                                                    Classes="fieldLabel"
+                                                    Text="{s:T settings.split.apps}" />
+                                                <Border Classes="field">
+                                                    <TextBox
+                                                        x:Name="SplitAppsBox"
+                                                        MinHeight="120"
+                                                        MaxHeight="220"
+                                                        Classes="bare area"
+                                                        MaxLength="20000" />
+                                                </Border>
+                                                <TextBlock
+                                                    Margin="2,6,0,0"
+                                                    Classes="small"
+                                                    Text="{s:T settings.split.appsHint}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock
+                                                    Margin="2,0,0,8"
+                                                    Classes="fieldLabel"
+                                                    Text="{s:T settings.split.domains}" />
+                                                <Border Classes="field">
+                                                    <TextBox
+                                                        x:Name="SplitDomainsBox"
+                                                        MinHeight="120"
+                                                        MaxHeight="220"
+                                                        Classes="bare area"
+                                                        MaxLength="20000" />
+                                                </Border>
+                                                <TextBlock
+                                                    Margin="2,6,0,0"
+                                                    Classes="small"
+                                                    Text="{s:T settings.split.domainsHint}" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock
+                                                    Margin="2,0,0,8"
+                                                    Classes="fieldLabel"
+                                                    Text="{s:T settings.split.ips}" />
+                                                <Border Classes="field">
+                                                    <TextBox
+                                                        x:Name="SplitIpsBox"
+                                                        MinHeight="120"
+                                                        MaxHeight="220"
+                                                        Classes="bare area"
+                                                        MaxLength="20000" />
+                                                </Border>
+                                                <TextBlock
+                                                    Margin="2,6,0,0"
+                                                    Classes="small"
+                                                    Text="{s:T settings.split.ipsHint}" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock
+                                            Margin="2,12,0,0"
+                                            Classes="small"
+                                            Text="{s:T settings.split.killSwitchNote}" />
+                                    </StackPanel>
+                                    <Border
+                                        x:Name="SplitErrorBox"
+                                        Margin="0,14,0,0"
+                                        Classes="errorBox"
+                                        IsVisible="False">
+                                        <TextBlock x:Name="SplitErrorText" Classes="errorText" />
+                                    </Border>
+                                    <Button
+                                        x:Name="SplitSaveButton"
+                                        Height="44"
+                                        Margin="0,16,0,0"
+                                        Padding="28,0"
+                                        HorizontalAlignment="Left"
+                                        Content="{s:T settings.split.save}"
+                                        Theme="{StaticResource PrimaryButton}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Rotating exit IP (panel: /me/rotation) -->
+                            <Border
+                                x:Name="RotationCard"
+                                Margin="0,16,0,0"
+                                Padding="24"
+                                Classes="panel"
+                                IsVisible="False">
+                                <StackPanel>
+                                    <TextBlock Classes="h2" Text="{s:T rotation.title}" />
+                                    <TextBlock
+                                        Margin="0,6,0,0"
+                                        Classes="small"
+                                        Text="{s:T rotation.hint}"
+                                        TextWrapping="Wrap" />
+                                    <Border Margin="0,16,0,0" Classes="segmentHost">
+                                        <UniformGrid x:Name="RotationIntervals" Rows="1" />
+                                    </Border>
+                                    <StackPanel x:Name="RotationCountriesPanel" IsVisible="False">
+                                        <TextBlock
+                                            Margin="2,18,0,4"
+                                            Classes="fieldLabel"
+                                            Text="{s:T rotation.countries}" />
+                                        <TextBlock
+                                            Margin="2,0,0,8"
+                                            Classes="small"
+                                            Text="{s:T rotation.countriesHint}"
+                                            TextWrapping="Wrap" />
+                                        <WrapPanel x:Name="RotationCountries" />
+                                    </StackPanel>
+                                    <Border
+                                        x:Name="RotationNote"
+                                        Margin="0,10,0,0"
+                                        Classes="errorBox"
+                                        IsVisible="False">
+                                        <TextBlock x:Name="RotationNoteText" Classes="errorText" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
 
@@ -2249,6 +2684,108 @@
                 </Panel>
             </Grid>
 
+            <!-- ── This device is paused (plan's device limit) ─────────────── -->
+            <Panel
+                x:Name="DevicePausedView"
+                Background="{StaticResource BgBrush}"
+                IsVisible="False">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <Border
+                        Width="468"
+                        Margin="0,36"
+                        Padding="38,36"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Classes="panel">
+                        <StackPanel>
+                            <Panel
+                                Width="64"
+                                Height="64"
+                                HorizontalAlignment="Left">
+                                <Ellipse
+                                    Fill="{StaticResource IconWellBrush}"
+                                    Stroke="{StaticResource LineStrongBrush}"
+                                    StrokeThickness="1" />
+                                <Path
+                                    Width="26"
+                                    Height="26"
+                                    Data="{StaticResource IconDevice}"
+                                    Stretch="Uniform"
+                                    Stroke="{StaticResource WarningBrush}"
+                                    StrokeJoin="Round"
+                                    StrokeThickness="1.8" />
+                            </Panel>
+                            <TextBlock
+                                Margin="0,24,0,0"
+                                Classes="kicker"
+                                Text="{s:T paused.kicker}" />
+                            <TextBlock
+                                Margin="0,10,0,0"
+                                Classes="h1"
+                                Text="{s:T paused.title}" />
+                            <TextBlock
+                                x:Name="DevicePausedBody"
+                                Margin="0,10,0,0"
+                                Classes="muted" />
+                            <TextBlock
+                                Margin="0,10,0,0"
+                                Classes="small"
+                                Text="{s:T paused.hint}" />
+                            <Border
+                                x:Name="DevicePausedErrorBox"
+                                Margin="0,16,0,0"
+                                Classes="errorBox"
+                                IsVisible="False">
+                                <TextBlock x:Name="DevicePausedErrorText" Classes="errorText" />
+                            </Border>
+                            <Button
+                                x:Name="DevicePausedActivate"
+                                Height="52"
+                                Margin="0,22,0,0"
+                                HorizontalAlignment="Stretch"
+                                Theme="{StaticResource PrimaryButton}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse
+                                        x:Name="DevicePausedSpinner"
+                                        Margin="0,0,10,0"
+                                        Classes="spinner onAccent"
+                                        IsVisible="False" />
+                                    <TextBlock FontSize="15.5" Text="{s:T paused.activate}" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                x:Name="DevicePausedPremium"
+                                Height="48"
+                                Margin="0,10,0,0"
+                                HorizontalAlignment="Stretch"
+                                Content="{s:T paused.premium}"
+                                Theme="{StaticResource SecondaryButton}" />
+                            <Button
+                                x:Name="DevicePausedUnblock"
+                                Height="46"
+                                Margin="0,10,0,0"
+                                HorizontalAlignment="Stretch"
+                                Content="{s:T ksr.turnOff}"
+                                IsVisible="False"
+                                Theme="{StaticResource SecondaryButton}" />
+                            <Grid Margin="0,18,0,0" ColumnDefinitions="Auto,*">
+                                <Button
+                                    x:Name="DevicePausedRetry"
+                                    HorizontalAlignment="Left"
+                                    Content="{s:T paused.retry}"
+                                    Theme="{StaticResource LinkButton}" />
+                                <Button
+                                    x:Name="DevicePausedSignOut"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    Content="{s:T account.signOut}"
+                                    Theme="{StaticResource LinkButton}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
+            </Panel>
+
             <!-- ── Update prompt (on start, over every screen) ─────────────── -->
             <Panel
                 x:Name="UpdatePrompt"
@@ -2320,6 +2857,161 @@
                 </Border>
             </Panel>
 
+            <!-- ── Kill switch still blocking after a crash (on start, over every screen) ── -->
+            <Panel
+                x:Name="KillSwitchRecoveryPrompt"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    Width="460"
+                    Padding="34,32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <Panel
+                            Width="56"
+                            Height="56"
+                            HorizontalAlignment="Left">
+                            <Ellipse
+                                Fill="{StaticResource IconWellBrush}"
+                                Stroke="{StaticResource LineStrongBrush}"
+                                StrokeThickness="1" />
+                            <Path
+                                Width="22"
+                                Height="22"
+                                Data="{StaticResource IconShield}"
+                                Stretch="Uniform"
+                                Stroke="{StaticResource WarningBrush}"
+                                StrokeJoin="Round"
+                                StrokeThickness="1.8" />
+                        </Panel>
+                        <TextBlock
+                            Margin="0,20,0,0"
+                            Classes="kicker"
+                            Text="{s:T ksr.kicker}" />
+                        <TextBlock
+                            Margin="0,8,0,0"
+                            Classes="h2"
+                            Text="{s:T ksr.title}" />
+                        <TextBlock
+                            x:Name="KillSwitchRecoveryBody"
+                            Margin="0,10,0,0"
+                            Classes="muted" />
+                        <TextBlock
+                            Margin="0,10,0,0"
+                            Classes="small"
+                            Text="{s:T ksr.password}" />
+                        <Border
+                            x:Name="KillSwitchRecoveryErrorBox"
+                            Margin="0,14,0,0"
+                            Classes="errorBox"
+                            IsVisible="False">
+                            <TextBlock x:Name="KillSwitchRecoveryErrorText" Classes="errorText" />
+                        </Border>
+                        <Button
+                            x:Name="KillSwitchRecoveryReconnect"
+                            Height="50"
+                            Margin="0,22,0,0"
+                            HorizontalAlignment="Stretch"
+                            Theme="{StaticResource PrimaryButton}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse
+                                    x:Name="KillSwitchRecoverySpinner"
+                                    Margin="0,0,10,0"
+                                    Classes="spinner onAccent"
+                                    IsVisible="False" />
+                                <TextBlock FontSize="15" Text="{s:T ksr.reconnect}" />
+                            </StackPanel>
+                        </Button>
+                        <Button
+                            x:Name="KillSwitchRecoveryTurnOff"
+                            Height="46"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Stretch"
+                            Content="{s:T ksr.turnOff}"
+                            Theme="{StaticResource SecondaryButton}" />
+                        <Button
+                            x:Name="KillSwitchRecoveryLater"
+                            Margin="0,12,0,0"
+                            HorizontalAlignment="Center"
+                            Content="{s:T ksr.later}"
+                            Theme="{StaticResource LinkButton}" />
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- ── One-time offer: protect all traffic with TUN mode ──────── -->
+            <Panel
+                x:Name="TunOfferPrompt"
+                Background="#B3050508"
+                IsVisible="False">
+                <Border
+                    Width="460"
+                    Padding="34,32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Classes="panel">
+                    <StackPanel>
+                        <Panel
+                            Width="56"
+                            Height="56"
+                            HorizontalAlignment="Left">
+                            <Ellipse
+                                Fill="{StaticResource IconWellBrush}"
+                                Stroke="{StaticResource LineStrongBrush}"
+                                StrokeThickness="1" />
+                            <Path
+                                Width="22"
+                                Height="22"
+                                Data="{StaticResource IconShield}"
+                                Stretch="Uniform"
+                                Stroke="{StaticResource LilacBrush}"
+                                StrokeJoin="Round"
+                                StrokeThickness="1.8" />
+                        </Panel>
+                        <TextBlock
+                            Margin="0,20,0,0"
+                            Classes="kicker"
+                            Text="{s:T tunOffer.kicker}" />
+                        <TextBlock
+                            Margin="0,8,0,0"
+                            Classes="h2"
+                            Text="{s:T tunOffer.title}" />
+                        <TextBlock
+                            Margin="0,10,0,0"
+                            Classes="muted"
+                            Text="{s:T tunOffer.body}" />
+                        <Border Margin="0,14,0,0" Classes="warnBox">
+                            <TextBlock Classes="warnText" Text="{s:T proxy.warn}" />
+                        </Border>
+                        <TextBlock
+                            Margin="0,14,0,0"
+                            Classes="small"
+                            Text="{s:T tunOffer.sudo}" />
+                        <Button
+                            x:Name="TunOfferAccept"
+                            Height="50"
+                            Margin="0,22,0,0"
+                            HorizontalAlignment="Stretch"
+                            Content="{s:T tunOffer.accept}"
+                            Theme="{StaticResource PrimaryButton}" />
+                        <Button
+                            x:Name="TunOfferKeep"
+                            Height="46"
+                            Margin="0,10,0,0"
+                            HorizontalAlignment="Stretch"
+                            Content="{s:T tunOffer.keep}"
+                            Theme="{StaticResource SecondaryButton}" />
+                        <TextBlock
+                            Margin="0,14,0,0"
+                            HorizontalAlignment="Center"
+                            Classes="small"
+                            Text="{s:T tunOffer.note}" />
+                    </StackPanel>
+                </Border>
+            </Panel>
+
             <!-- ── Administrator (sudo) password for TUN mode ──────────────── -->
             <Panel
                 x:Name="SudoPrompt"
@@ -2354,6 +3046,7 @@
                             Classes="h2"
                             Text="{s:T sudo.title}" />
                         <TextBlock
+                            x:Name="SudoBodyText"
                             Margin="0,10,0,0"
                             Classes="muted"
                             Text="{s:T sudo.body}" />

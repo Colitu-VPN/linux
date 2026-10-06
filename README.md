@@ -14,7 +14,7 @@ system proxy, TUN, routing and DNS. It shares that core layer with the
 | | |
 |---|---|
 | App | `Colitu VPN` (`/opt/colitu-vpn/ColituVPN`, launcher `colitu-vpn`), Avalonia on .NET 10 |
-| Version | `1.1.2` (`src/ColituVPN/ColituVPN.csproj`) |
+| Version | `1.2.0` (`src/ColituVPN/ColituVPN.csproj`) |
 | OS | Debian/Ubuntu/Mint (`.deb`), Fedora/RHEL/openSUSE (`.rpm`), any distribution (`.tar.gz`); x64 and arm64 |
 | Languages | Russian, English, Turkish |
 | License | [GPL-3.0](LICENSE) |
@@ -38,13 +38,22 @@ system proxy, TUN, routing and DNS. It shares that core layer with the
   tried in order until traffic actually flows, and the result is reported back
   to the panel.
 - **Proxy and TUN modes.** Proxy mode sets the desktop's system proxy (GNOME,
-  KDE) and needs no extra rights. TUN mode sends all traffic through the tunnel;
-  it runs the core as root through `sudo`, so the app asks for the
-  sudo password once per run and keeps it in memory only.
+  KDE) and needs no extra rights, but it does not cover DNS, UDP/WebRTC, IPv6
+  or apps that ignore the system proxy; the app says so wherever proxy mode is
+  selected or active. TUN mode sends all traffic through the tunnel; it runs the
+  core as root through `sudo`, so the app asks for the sudo password once per
+  run and keeps it in memory only. The app offers TUN mode once (first start,
+  and once after updating from an older version) and never changes the mode
+  by itself.
 - **Kill switch** on nftables (TUN mode). While it is on, only loopback, the
   tunnel, the local network, DHCP, the VPN servers and the Colitu API can be
-  reached. A root watcher removes the rules as soon as the app exits, so a crash
-  never leaves the computer offline.
+  reached. It fails closed: if the app crashes or is killed, the rules stay
+  and the internet stays blocked. The next start explains why and offers
+  "Reconnect" or "Turn off protection". `colitu-vpn --colitu-cleanup` (or
+  `sudo nft delete table inet colitu_killswitch`) removes the rules by hand,
+  and removing the package removes them too. A reboot clears them as well.
+- **Two-factor sign-in.** Accounts with 2FA (set up on colitu.com) get a code
+  step after the password: the 6-digit authenticator code or a recovery code.
 - **Ad blocking** (optional): DNS through Colitu's ad-blocking servers, the same as on the phones and Windows.
 - **Russian sites without turning off the VPN.** Russian sites and apps (banks,
   Gosuslugi, marketplaces) go out directly with the user's own address, as on
@@ -71,6 +80,7 @@ system proxy, TUN, routing and DNS. It shares that core layer with the
 | `src/ColituVPN/Assets/Colitu` | theme, fonts, logo and flags |
 | `src/ServiceLib` | core layer: config generation, routing, DNS, core processes |
 | `src/ColituVPN.Tests`, `src/ServiceLib.Tests` | tests |
+| `headless/` | headless client for servers and Raspberry Pi: `colitud` service + `colitu` CLI (Go) |
 | `package-debian.sh`, `package-rhel.sh` | packages |
 | `scripts/sign-linux-manifest.ps1` | signs the update manifest |
 
@@ -120,6 +130,42 @@ sudo dnf install ./colitu-vpn-X.Y.Z-1.x86_64.rpm
 Any other distribution: unpack `colitu-vpn-X.Y.Z-linux-x64.tar.gz` and run
 `./ColituVPN`. TUN mode and the kill switch need `sudo` and `nftables`.
 
+## Headless / Raspberry Pi
+
+For machines without a desktop (Raspberry Pi 3/4/5/Zero 2 W with 64-bit Raspberry Pi OS,
+mini PCs, servers) the `.deb` also installs a headless client, written in Go (`headless/`,
+standard library plus one QR-code library, no cgo):
+
+- `colitud` is a systemd service that runs as root, keeps the sign-in and runs the bundled
+  sing-box core in TUN mode with strict routing (traffic cannot leave outside the tunnel while
+  connected; the local network stays reachable so SSH keeps working).
+- `colitu` is the command line: `colitu login`, `servers`, `connect [--country tr | --server ID]`,
+  `status [--json]`, `disconnect`, `activate`, `autoconnect on|off`, `logout`. It talks to the
+  daemon over `/run/colitu/colitud.sock` (members of the `colitu` group).
+
+```sh
+sudo apt install ./colitu-vpn_*_arm64.deb
+sudo systemctl enable --now colitud        # the package never enables the service itself
+sudo usermod -aG colitu $USER              # then log out and in
+colitu login                               # shows a code and QR to approve at colitu.com
+colitu connect
+```
+
+`colitu login` uses the device-link sign-in (no password on the device); tokens are stored in
+`/var/lib/colitu/state.json` (mode 0600, root). The GUI and the headless client can be installed
+together but must not be connected at the same time.
+
+```sh
+cd headless
+go vet ./... && go test ./...
+packaging/stage-headless.sh build dist amd64 arm64   # CGO_ENABLED=0 cross-build
+```
+
+`package-debian.sh` and `scripts/package-linux.sh` stage the binaries, `packaging/colitud.service`
+and the `colitu` group (`packaging/colitu.sysusers`) into the `.deb` for amd64 and arm64.
+`COLITU_API_BASE` overrides the API base (`https://colitu.com/api/v1`), `COLITU_SINGBOX` the
+sing-box path. User documentation: the Raspberry Pi page of the Colitu help centre.
+
 ## License
 
 Colitu VPN for Linux is distributed under the
@@ -127,6 +173,6 @@ Colitu VPN for Linux is distributed under the
 that keep their own licenses; Xray-core (MPL-2.0) and sing-box (GPL-3.0) are
 bundled as separate programs. See [NOTICE](NOTICE) for the full list.
 
-The "Colitu" name and logo are trademarks of Colitu and are not covered by the
+The "Colitu" name and logo are trademarks of COLITU LIMITED and are not covered by the
 GPL. If you redistribute a modified version, please use your own name and
 branding.

@@ -485,6 +485,7 @@ Name:           colitu-vpn
 Version:        __VERSION__
 Release:        1%{?dist}
 Summary:        Colitu VPN desktop client for Linux
+Vendor:         COLITU LIMITED
 License:        GPL-3.0-only
 URL:            https://colitu.com
 BugURL:         https://github.com/colitu/linux/issues
@@ -565,6 +566,13 @@ install -m0644 %{_builddir}/__PKGROOT__/colitu-vpn.png %{buildroot}%{_datadir}/i
 %postun
 /usr/bin/update-desktop-database %{_datadir}/applications >/dev/null 2>&1 || true
 /usr/bin/gtk-update-icon-cache -f %{_datadir}/icons/hicolor >/dev/null 2>&1 || true
+# The kill switch fails closed: its nftables table outlives a crashed or killed app.
+# Erasing the package ($1 = 0; not an upgrade) removes the table, its marker and an old watcher.
+if [ "$1" -eq 0 ]; then
+  if command -v nft >/dev/null 2>&1; then nft delete table inet colitu_killswitch 2>/dev/null || true; fi
+  rm -f /run/colitu-killswitch.active
+  if [ -r /run/colitu-killswitch.watch ]; then kill "$(cat /run/colitu-killswitch.watch)" 2>/dev/null || true; rm -f /run/colitu-killswitch.watch; fi
+fi
 
 %files
 %{_bindir}/colitu-vpn

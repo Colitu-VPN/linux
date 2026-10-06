@@ -7,9 +7,9 @@
 		<AssemblyName>ColituVPN</AssemblyName>
 		<RootNamespace>v2rayN.Desktop</RootNamespace>
 		<!-- Colitu for Linux has its own version line; Directory.Build.props carries the core layer version. -->
-		<Version>1.1.2</Version>
+		<Version>1.2.0</Version>
 		<Product>Colitu VPN</Product>
-		<Company>Colitu</Company>
+		<Company>COLITU LIMITED</Company>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<CETCompat>false</CETCompat>
 	</PropertyGroup>

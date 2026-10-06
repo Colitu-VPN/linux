@@ -105,18 +105,7 @@ public partial class ColituMainWindow
                 return;
             }
 
-            PasswordBox.Text = "";
-            PasswordRepeatBox.Text = "";
-            if (result.RequiresEmailVerification)
-            {
-                ShowVerify(codeJustSent: true);
-                return;
-            }
-            await EnterAppAsync(offline: false);
-            if (_registerMode && _auth.CurrentSubscription is { Active: true } subscription)
-            {
-                ShowToast(PlanTitle(subscription) + " · " + PlanDetailText(subscription));
-            }
+            await ContinueSignInAsync(result, _registerMode);
         }
         catch (Exception ex)
         {
@@ -125,6 +114,31 @@ public partial class ColituMainWindow
         finally
         {
             SetAuthBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// What follows an accepted sign-in (password, 2FA code or registration): the 2FA
+    /// step, the e-mail confirmation, or the app.
+    /// </summary>
+    private async Task ContinueSignInAsync(ColituAuthResult result, bool registered)
+    {
+        PasswordBox.Text = "";
+        PasswordRepeatBox.Text = "";
+        if (result.RequiresMfa)
+        {
+            ShowMfa(result);
+            return;
+        }
+        if (result.RequiresEmailVerification)
+        {
+            ShowVerify(codeJustSent: true);
+            return;
+        }
+        await EnterAppAsync(offline: false);
+        if (registered && _auth.CurrentSubscription is { Active: true } subscription)
+        {
+            ShowToast(PlanTitle(subscription) + " · " + PlanDetailText(subscription));
         }
     }
 
@@ -197,5 +211,10 @@ public partial class ColituMainWindow
         _planRequired = false;
         AuthLoginTab.IsChecked = true;
         ShowAuth();
+        // Rules kept from a crashed run need the password to go; say why there is no internet.
+        if (_vpn.KillSwitchEngaged)
+        {
+            ShowKillSwitchRecovery();
+        }
     }
 }

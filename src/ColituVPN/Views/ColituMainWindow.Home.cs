@@ -29,12 +29,7 @@ public partial class ColituMainWindow
             }
         };
         ConnectButton.Click += async (_, _) => await ToggleConnectionAsync();
-        UnblockButton.Click += async (_, _) => await GuardAsync("Unblock", async () =>
-        {
-            await _vpn.DisconnectAsync();
-            ApplyStatus();
-            ShowToast(Loc.I["info.disconnected"]);
-        });
+        UnblockButton.Click += async (_, _) => await GuardAsync("Unblock", TurnOffKillSwitchBlockAsync);
         LocationCard.PointerReleased += (_, _) => Navigate("locations");
         ChangeServerButton.Click += (_, _) => Navigate("locations");
         PlanCtaButton.Click += (_, _) => Navigate("plan");
@@ -110,7 +105,7 @@ public partial class ColituMainWindow
             : _planRequired ? loc["home.title.noplan"]
             : loc["home.title.off"];
         HomeSubtitle.Text = on ? loc.Format("home.sub.on", ("server", ServerLabel(_vpn.ConnectedServer) ?? loc["server.auto"]))
-            : blocked ? loc["home.sub.blocked"]
+            : blocked ? loc[_vpn.KillSwitchRecoveryPending ? "home.sub.crashBlocked" : "home.sub.blocked"]
             : busy ? loc["home.sub.connecting"]
             : _planRequired ? loc["home.sub.noplan"]
             : status == ColituVpnStatus.Error && _vpn.LastError is { Length: > 0 } error ? error
@@ -123,6 +118,8 @@ public partial class ColituMainWindow
         var protocol = on ? _vpn.ConnectedProtocol : null;
         ProtocolChip.IsVisible = protocol is { Length: > 0 };
         ProtocolChipText.Text = protocol is { Length: > 0 } ? $"{loc["home.protocol"]} · {ColituTransportNames.Of(protocol, loc)}".ToUpper(loc.Culture) : "";
+        // Proxy mode leaves DNS, UDP/WebRTC, IPv6 and proxy-unaware apps outside the tunnel: say so while it runs.
+        ProxyCoverageWarning.IsVisible = on && !_vpn.Preferences.IsTunMode;
 
         StatusChipText.Text = on ? loc["status.protected"]
             : blocked ? loc["status.blocked"]
@@ -156,6 +153,8 @@ public partial class ColituMainWindow
         var on = _vpn.Status == ColituVpnStatus.Connected;
         SessionTimer.IsVisible = on;
         PowerIcon.IsVisible = !on;
+        // The clock ticks every second: the rotation countdown rides on it.
+        ApplyRouteChip();
     }
 
     private async Task ToggleConnectionAsync()
@@ -198,6 +197,12 @@ public partial class ColituMainWindow
             ApplyAccount();
             ShowToast(Loc.I["err.noPlan"], true);
             Navigate("plan");
+        }
+        catch (ColituDevicePausedException)
+        {
+            // The paused screen explains it and offers "Use this device instead".
+            _pausedDuringConnect = true;
+            ApplyDevicePause();
         }
         catch (ColituSudoRequiredException)
         {
@@ -257,6 +262,7 @@ public partial class ColituMainWindow
         var active = subscription?.Active == true;
         var status = subscription?.Status ?? "inactive";
 
+        ApplyPlanNotice();
         PlanName.Text = active ? PlanTitle(subscription!) : loc["plan.none"];
         PlanDetail.Text = active ? PlanDetailText(subscription!) : loc["plan.noneHint"];
         SetBadge(PlanBadge, PlanBadgeText, status);
@@ -296,7 +302,7 @@ public partial class ColituMainWindow
         // Plan page strip
         CurrentPlanText.Text = active ? $"{PlanTitle(subscription!)} · {PlanDetailText(subscription!)}" : loc["plan.none"];
         SetBadge(CurrentPlanBadge, CurrentPlanBadgeText, status);
-        CreditText.Text = loc.Format("brand.credit", ("brand", "Avenlith"));
+        CreditText.Text = loc.Format("brand.credit", ("brand", "COLITU LIMITED"));
     }
 
     /// <summary>The free plan: 10 GB a month, renewed on the 1st.</summary>
@@ -391,6 +397,8 @@ public partial class ColituMainWindow
             SettingsAdBlockRow.IsVisible = ColituVpnService.AdBlockAvailable;
             SettingsTray.IsChecked = preferences.CloseToTray;
             SettingsStartup.IsChecked = _vpn.LaunchAtStartup;
+            ApplySplitToUi();
+            ApplyRotationUi();
             ApplyModeHint();
         }
         finally
@@ -401,7 +409,12 @@ public partial class ColituMainWindow
 
     private void ApplyModeHint()
     {
-        ModeHint.Text = Loc.I[_vpn.Preferences.IsTunMode ? "settings.mode.tunHint" : "settings.mode.proxyHint"];
+        var tun = _vpn.Preferences.IsTunMode;
+        ModeHint.Text = Loc.I[tun ? "settings.mode.tunHint" : "settings.mode.proxyHint"];
+        HomeProxyWarning.IsVisible = SettingsProxyWarning.IsVisible = !tun;
+        ProxyCoverageWarning.IsVisible = !tun && _vpn.Status == ColituVpnStatus.Connected;
+        ApplySplitVisibility(SelectedSplitMode());
+        ApplySplitChip();
     }
 
     private async Task ModeCheckedAsync(object? sender)
@@ -439,12 +452,21 @@ public partial class ColituMainWindow
     {
         var tunnelSettingsChanged = preferences.ConnectionMode != _vpn.Preferences.ConnectionMode
             || preferences.DnsLeakProtectionEnabled != _vpn.Preferences.DnsLeakProtectionEnabled
-            || preferences.AdBlockEnabled != _vpn.Preferences.AdBlockEnabled;
+            || preferences.AdBlockEnabled != _vpn.Preferences.AdBlockEnabled
+            || !preferences.SameSplitTunnel(_vpn.Preferences);
         var connected = _vpn.Status == ColituVpnStatus.Connected;
 
         // Switching a live tunnel to TUN needs the password before the reconnect.
         if (connected && preferences.IsTunMode && !_vpn.Preferences.IsTunMode
             && AppManager.Instance.LinuxSudoPwd.IsNullOrEmpty() && !await AskSudoPasswordAsync())
+        {
+            ApplyPreferencesToUi();
+            return;
+        }
+        // Turning the kill switch off while it blocks (rules kept from a crashed run) needs
+        // the password to remove the rules.
+        if (!preferences.KillSwitchEnabled && _vpn.Preferences.KillSwitchEnabled
+            && _vpn.KillSwitchNeedsPasswordToRelease && !await AskSudoPasswordAsync("sudo.bodyKillSwitch"))
         {
             ApplyPreferencesToUi();
             return;

@@ -180,6 +180,11 @@ public partial class ColituMainWindow
             ResetCodeBox.Text = "";
             _resetTimer?.Stop();
             EmailBox.Text = email;
+            if (result.RequiresMfa)
+            {
+                ShowMfa(result);
+                return;
+            }
             if (result.RequiresEmailVerification)
             {
                 ShowVerify(codeJustSent: true);

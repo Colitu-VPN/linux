@@ -543,28 +543,63 @@ Categories=Network;Security;
 EOF
 }
 
+# The headless client (colitud + colitu CLI, see headless/) ships in the same package:
+# the binaries are cross-compiled with CGO_ENABLED=0 (needs Go; HEADLESS_BIN_DIR can point
+# at a prebuilt headless/packaging/stage-headless.sh build dir instead).
+stage_headless() {
+  local stage="$1"
+  local deb_arch="$2"
+
+  [[ -f "$SCRIPT_DIR/headless/packaging/stage-headless.sh" ]] || die "headless/packaging/stage-headless.sh not found"
+  bash "$SCRIPT_DIR/headless/packaging/stage-headless.sh" stage "$stage" "$deb_arch" "$VERSION"
+}
+
 write_maintainer_scripts() {
   local debian_dir="$1"
+  local pk="$SCRIPT_DIR/headless/packaging"
 
-  install -m 755 /dev/stdin "$debian_dir/postinst" <<'EOF'
+  {
+    cat <<'EOF'
 #!/bin/sh
 set -e
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
 fi
-exit 0
 EOF
+    cat "$pk/maintainer-postinst.sh"
+    echo "exit 0"
+  } > "$debian_dir/postinst"
 
-  install -m 755 /dev/stdin "$debian_dir/postrm" <<'EOF'
+  {
+    cat <<'EOF'
 #!/bin/sh
 set -e
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
 fi
-exit 0
+# The kill switch fails closed: its nftables table outlives a crashed or killed app.
+# Removing the package (not upgrading it) removes the table, its marker and an old watcher.
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+  if command -v nft >/dev/null 2>&1; then nft delete table inet colitu_killswitch 2>/dev/null || true; fi
+  rm -f /run/colitu-killswitch.active
+  if [ -r /run/colitu-killswitch.watch ]; then kill "$(cat /run/colitu-killswitch.watch)" 2>/dev/null || true; rm -f /run/colitu-killswitch.watch; fi
+fi
 EOF
+    cat "$pk/maintainer-postrm.sh"
+    echo "exit 0"
+  } > "$debian_dir/postrm"
+
+  {
+    printf '#!/bin/sh
+set -e
+'
+    cat "$pk/maintainer-prerm.sh"
+    echo "exit 0"
+  } > "$debian_dir/prerm"
+
+  chmod 0755 "$debian_dir/postinst" "$debian_dir/postrm" "$debian_dir/prerm"
 }
 
 package_binary() {
@@ -607,15 +642,18 @@ package_binary() {
   write_launcher_file "$stage"
   write_desktop_file "$stage"
   write_maintainer_scripts "$debian_dir"
+  stage_headless "$stage" "$deb_arch"
 
-  extra_depends="libc6 (>= 2.39), fontconfig (>= 2.15.0), desktop-file-utils (>= 0.26), xdg-utils (>= 1.1.3), coreutils (>= 9.4), bash (>= 5.2.21), libfreetype6 (>= 2.13)"
+  # The Avalonia GUI's native libraries are listed explicitly (the same for amd64 and arm64),
+  # as scripts/package-linux.sh does: libx11-6, libice6, libsm6, libfontconfig1, libssl3, ICU.
+  extra_depends="libc6 (>= 2.39), fontconfig (>= 2.15.0), desktop-file-utils (>= 0.26), xdg-utils (>= 1.1.3), coreutils (>= 9.4), bash (>= 5.2.21), libfreetype6 (>= 2.13), libx11-6, libice6, libsm6, libfontconfig1, libssl3t64 | libssl3, ca-certificates"
 
   mkdir -p "$workdir/debian"
   cat > "$workdir/debian/control" <<EOF
 Source: colitu-vpn
 Section: net
 Priority: optional
-Maintainer: Colitu <support@colitu.com>
+Maintainer: COLITU LIMITED <support@colitu.com>
 Standards-Version: 4.7.0
 
 Package: colitu-vpn
@@ -661,7 +699,7 @@ EOF
 Package: colitu-vpn
 Version: ${VERSION}
 Architecture: ${deb_arch}
-Maintainer: Colitu <support@colitu.com>
+Maintainer: COLITU LIMITED <support@colitu.com>
 Homepage: https://colitu.com
 Section: net
 Priority: optional
@@ -670,7 +708,8 @@ Recommends: sudo, nftables, pkexec | policykit-1, libnotify-bin
 Description: Colitu VPN desktop client for Linux
  Sign in with your Colitu account and connect with one click. Xray and
  sing-box cores, proxy and TUN modes, kill switch (nftables), DNS leak
- protection and live support.
+ protection and live support. Also installs the headless client for
+ servers and Raspberry Pi: the colitud service and the colitu command.
 EOF
 
   find "$stage/opt/colitu-vpn" -type d -exec chmod 0755 {} +
