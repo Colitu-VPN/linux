@@ -241,21 +241,34 @@ public sealed class ColituUpdateService
         });
 
         // Absolute paths: pkexec would otherwise look the program up in this user's PATH.
-        var arguments = info.PackageKind == "deb"
-            ? new[] { ColituShell.SystemBinary("apt-get"), "install", "-y", "--allow-downgrades", info.LocalPath }
+        var installer = info.PackageKind == "deb"
+            ? new[] { ColituShell.SystemBinary("apt-get"), "install", "-y", "--allow-downgrades" }
             : File.Exists("/usr/bin/dnf")
-                ? ["/usr/bin/dnf", "install", "-y", info.LocalPath]
+                ? ["/usr/bin/dnf", "install", "-y"]
                 : File.Exists("/usr/bin/zypper")
-                    ? ["/usr/bin/zypper", "--non-interactive", "install", "--allow-unsigned-rpm", info.LocalPath]
-                    : [ColituShell.SystemBinary("rpm"), "-U", "--force", info.LocalPath];
+                    ? ["/usr/bin/zypper", "--non-interactive", "install", "--allow-unsigned-rpm"]
+                    : [ColituShell.SystemBinary("rpm"), "-U", "--force"];
 
+        // The package sits in this user's folder, and the polkit prompt can stay
+        // open for minutes: verifying it here is not enough. Root copies it into
+        // a root-only temp folder, checks the SHA256 of that copy and installs
+        // exactly that copy, so swapping the file during the prompt fails.
+        const string script = """
+            set -eu
+            src="$1"; sum="$2"; ext="$3"; shift 3
+            dir=$(mktemp -d /var/tmp/colitu-update.XXXXXX)
+            trap 'rm -rf "$dir"' EXIT
+            cp -- "$src" "$dir/package.$ext"
+            echo "$sum  $dir/package.$ext" | sha256sum -c --quiet -
+            "$@" "$dir/package.$ext"
+            """;
         var startInfo = new ProcessStartInfo(ColituShell.SystemBinary("pkexec"))
         {
             UseShellExecute = false,
             RedirectStandardError = true,
             RedirectStandardOutput = true
         };
-        foreach (var arg in arguments)
+        foreach (var arg in new[] { ColituShell.SystemBinary("sh"), "-c", script, "colitu-update", info.LocalPath, info.Sha256!.Trim().ToLowerInvariant(), info.PackageKind! }.Concat(installer))
         {
             startInfo.ArgumentList.Add(arg);
         }
