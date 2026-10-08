@@ -63,9 +63,12 @@ jobs:
           # Colitu's ad-blocking DNS nodes are build-time secrets, never in the source.
           # MSBuild reads the comma-separated list from the environment (-p: would split it).
           ColituAdBlockDoh: ${{ secrets.COLITU_ADBLOCK_DOH }}
+          # API mirror origins for the failover (comma-separated https origins), also a build-time secret.
+          ColituMirrors: ${{ secrets.COLITU_MIRRORS }}
           ARCH: ${{ matrix.arch }}
         run: |
           case "$ColituAdBlockDoh" in https://*) ;; *) echo "::error::COLITU_ADBLOCK_DOH secret is missing"; exit 1 ;; esac
+          case "$ColituMirrors" in https://*) ;; *) echo "::error::COLITU_MIRRORS secret is missing"; exit 1 ;; esac
           dotnet publish src/ColituVPN/ColituVPN.csproj -c Release -r "linux-$ARCH" \
             -p:SelfContained=true -p:PublishSingleFile=false -p:Version="$VERSION" -o publish
 

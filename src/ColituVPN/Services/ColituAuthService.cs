@@ -112,10 +112,34 @@ public sealed class ColituAuthService
 
     private ColituAuthService()
     {
-        ApiBaseUrl = ResolveApiBaseUrl();
+        _apiOverride = ResolveApiBaseOverride();
     }
 
-    public string ApiBaseUrl { get; }
+    /// <summary>A developer/staging base (config file or debug environment): used alone, no failover and no list refresh.</summary>
+    private readonly string? _apiOverride;
+
+    /// <summary>The API base the next request starts with (the one that last worked, from the signed list or the built-in bases).</summary>
+    public string ApiBaseUrl => _apiOverride ?? ColituEndpointList.Instance.Bases()[0];
+
+    /// <summary>Hosts the app talks to: they must stay reachable under the kill switch, failover targets included.</summary>
+    public IEnumerable<string> PinnedUrls()
+    {
+        if (_apiOverride != null)
+        {
+            return [_apiOverride, WebBaseUrl];
+        }
+        return ColituEndpointList.Instance.PinnedUrls().Append(WebBaseUrl);
+    }
+
+    private bool IsKnownSessionBase(string? baseUrl)
+    {
+        if (_apiOverride != null)
+        {
+            return string.Equals(baseUrl, _apiOverride, StringComparison.OrdinalIgnoreCase);
+        }
+        return baseUrl != null && ColituEndpointList.Instance.KnownBases()
+            .Contains(baseUrl.TrimEnd('/'), StringComparer.OrdinalIgnoreCase);
+    }
     public ColituUser? CurrentUser { get; private set; }
     public ColituSubscription? CurrentSubscription { get; private set; }
 
@@ -141,6 +165,11 @@ public sealed class ColituAuthService
     /// </summary>
     public async Task<ColituStartupState> InitializeAsync()
     {
+        // Signed endpoint list: refreshed in the background, never delaying startup.
+        if (_apiOverride == null)
+        {
+            ColituEndpointList.Instance.StartBackgroundRefresh();
+        }
         LoadSession();
         if (string.IsNullOrWhiteSpace(_refreshToken))
         {
@@ -148,7 +177,7 @@ public sealed class ColituAuthService
         }
 
         // Sessions created against the retired API cannot be refreshed by the panel.
-        if (!string.Equals(_session.ApiBaseUrl, ApiBaseUrl, StringComparison.OrdinalIgnoreCase))
+        if (!IsKnownSessionBase(_session.ApiBaseUrl))
         {
             ClearSession();
             return ColituStartupState.SignedOut;
@@ -688,8 +717,7 @@ public sealed class ColituAuthService
         }
 
         var tokenUsed = _accessToken;
-        var request = PrepareAuthorized(requestFactory(), tokenUsed, includeDevice);
-        var response = await _httpClient.SendAsync(request, token);
+        var response = await SendApiAsync(() => PrepareAuthorized(requestFactory(), tokenUsed, includeDevice), token);
         if (response.StatusCode != HttpStatusCode.Unauthorized || !allowRefresh)
         {
             return response;
@@ -714,7 +742,8 @@ public sealed class ColituAuthService
                 "REFRESH_FAILED");
         }
 
-        return await _httpClient.SendAsync(PrepareAuthorized(requestFactory(), _accessToken, includeDevice), token);
+        var refreshedToken = _accessToken;
+        return await SendApiAsync(() => PrepareAuthorized(requestFactory(), refreshedToken, includeDevice), token);
     }
 
     private HttpRequestMessage PrepareAuthorized(HttpRequestMessage request, string? token, bool includeDevice)
@@ -815,13 +844,48 @@ public sealed class ColituAuthService
 
     private async Task<HttpResponseMessage> SendClientJsonAsync(HttpMethod method, string path, object body, bool includeDevice = false, bool mfaCapable = false)
     {
-        var request = JsonRequest(method, path, body);
-        AddClientHeaders(request, includeDevice);
-        if (mfaCapable)
+        return await SendApiAsync(() =>
         {
-            request.Headers.TryAddWithoutValidation(FeaturesHeader, FeaturesValue);
+            var request = JsonRequest(method, path, body);
+            AddClientHeaders(request, includeDevice);
+            if (mfaCapable)
+            {
+                request.Headers.TryAddWithoutValidation(FeaturesHeader, FeaturesValue);
+            }
+            return request;
+        }, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Sends an API request. With the signed endpoint list it goes to the base that last worked and
+    /// moves to the next one only after a network-level failure; any HTTP response ends the loop.
+    /// A developer override base is used alone.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendApiAsync(Func<HttpRequestMessage> requestFactory, CancellationToken token)
+    {
+        var http = _httpClient;
+        if (_apiOverride != null)
+        {
+            return await http.SendAsync(requestFactory(), token);
         }
-        return await _httpClient.SendAsync(request);
+        var list = ColituEndpointList.Instance;
+        var known = list.KnownBases();
+        var isGet = true;
+        return await ColituEndpointList.SendWithFailoverAsync(
+            list.Bases(),
+            baseUrl =>
+            {
+                var request = requestFactory();
+                isGet = request.Method == HttpMethod.Get;
+                if (request.RequestUri != null)
+                {
+                    request.RequestUri = ColituEndpointList.Rebase(request.RequestUri, known, baseUrl);
+                }
+                return http.SendAsync(request, token);
+            },
+            ex => ColituEndpointList.ShouldFailover(ex, isGet),
+            list.RememberWorking,
+            token);
     }
 
     private HttpRequestMessage JsonRequest(HttpMethod method, string path, object body)
@@ -857,7 +921,8 @@ public sealed class ColituAuthService
         _accessTokenExpiresAt = ParseJwtExpiry(accessToken);
         _session.AccessToken = Protect(accessToken);
         _session.RefreshToken = Protect(refreshToken);
-        _session.ApiBaseUrl = ApiBaseUrl;
+        // The stable base, not whichever mirror answered: a failover must not sign the user out.
+        _session.ApiBaseUrl = _apiOverride ?? DefaultApiBaseUrl;
         PersistSession();
     }
 
@@ -919,7 +984,8 @@ public sealed class ColituAuthService
         }
     }
 
-    private static string ResolveApiBaseUrl()
+    /// <summary>The developer/staging override of the API base, null in normal use.</summary>
+    private static string? ResolveApiBaseOverride()
     {
 #if DEBUG
         // Release builds ignore the variable: anything that can set an environment
@@ -947,7 +1013,7 @@ public sealed class ColituAuthService
             }
         }
 
-        return DefaultApiBaseUrl;
+        return null;
     }
 
     /// <summary>Passwords and tokens never travel in clear text: only https (or a local mock in debug builds).</summary>

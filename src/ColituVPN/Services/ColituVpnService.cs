@@ -1102,9 +1102,12 @@ public sealed class ColituVpnService
             var allowed = new List<IPAddress>(ColituNetwork.KnownAddresses());
             // The panel is dialled by its pinned addresses (the rules drop DNS to public upstream
             // resolvers); refreshed here, the last good ones stay when the lookup fails.
-            var apiHost = new Uri(ColituAuthService.Instance.ApiBaseUrl).Host;
-            await ColituPinnedHosts.RefreshAsync([apiHost]);
-            foreach (var host in new[] { apiHost }.Concat(ColituNetwork.DohEndpoints.Select(url => new Uri(url).Host)))
+            // Every API base and list URL of the signed endpoint list: failover must never hit the kill switch.
+            var apiHosts = ColituAuthService.Instance.PinnedUrls()
+                .Select(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : null)
+                .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            await ColituPinnedHosts.RefreshAsync(apiHosts);
+            foreach (var host in apiHosts.Concat(ColituNetwork.DohEndpoints.Select(url => new Uri(url).Host)))
             {
                 allowed.AddRange(ColituPinnedHosts.AddressesOf(host));
                 if (await ColituNetwork.ResolveServerAsync(host) is { } address)

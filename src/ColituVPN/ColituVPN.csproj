@@ -17,6 +17,8 @@
 	<ItemGroup>
 		<!-- Colitu's ad-blocking DNS nodes are not in the public source: release builds set the ColituAdBlockDoh environment variable (a comma-separated list, so not -p:). -->
 		<AssemblyMetadata Include="ColituAdBlockDoh" Value="$(ColituAdBlockDoh)" />
+		<!-- Mirror origins for the API failover are not in the public source either: release builds set the ColituMirrors environment variable (a comma-separated list of https origins). -->
+		<AssemblyMetadata Include="ColituMirrors" Value="$(ColituMirrors)" />
 	</ItemGroup>
 
 	<ItemGroup>
