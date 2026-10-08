@@ -551,6 +551,10 @@
                     <Setter Property="Cursor" Value="Arrow" />
                     <Setter Property="Margin" Value="0,12,0,8" />
                 </Style>
+                <!-- A city under an open country header: indented card. -->
+                <Style Selector="^.cityRow">
+                    <Setter Property="Margin" Value="28,0,0,8" />
+                </Style>
                 <Style Selector="^.sectionHeader /template/ Border#Body">
                     <Setter Property="Padding" Value="0" />
                     <Setter Property="Background" Value="Transparent" />

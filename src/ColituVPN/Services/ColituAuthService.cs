@@ -347,7 +347,9 @@ public sealed class ColituAuthService
     {
         UseProxy = false,
         ConnectTimeout = TimeSpan.FromSeconds(8),
-        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
+        // The kill switch drops DNS to public upstream resolvers: dial the API's pinned addresses.
+        ConnectCallback = ColituPinnedHosts.ConnectAsync
     })
     { Timeout = TimeSpan.FromSeconds(20) };
 

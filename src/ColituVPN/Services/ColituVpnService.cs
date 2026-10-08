@@ -956,9 +956,13 @@ public sealed class ColituVpnService
         {
             // Re-applied on every engage so a new server or a moved panel address is let through.
             var allowed = new List<IPAddress>(ColituNetwork.KnownAddresses());
-            foreach (var host in new[] { new Uri(ColituAuthService.Instance.ApiBaseUrl).Host }
-                         .Concat(ColituNetwork.DohEndpoints.Select(url => new Uri(url).Host)))
+            // The panel is dialled by its pinned addresses (the rules drop DNS to public upstream
+            // resolvers); refreshed here, the last good ones stay when the lookup fails.
+            var apiHost = new Uri(ColituAuthService.Instance.ApiBaseUrl).Host;
+            await ColituPinnedHosts.RefreshAsync([apiHost]);
+            foreach (var host in new[] { apiHost }.Concat(ColituNetwork.DohEndpoints.Select(url => new Uri(url).Host)))
             {
+                allowed.AddRange(ColituPinnedHosts.AddressesOf(host));
                 if (await ColituNetwork.ResolveServerAsync(host) is { } address)
                 {
                     allowed.Add(address);
@@ -2054,6 +2058,9 @@ public sealed class ColituVpnServer
     public string? TestUrl { get; set; }
     /// <summary>Use-case categories from the panel (streaming, gaming, privacy, speed, torrent, ai).</summary>
     public List<string> Categories { get; set; } = [];
+    /// <summary>Service tags from the panel (chatgpt, netflix, youtube_adfree...); only <c>youtube_adfree</c> is shown here, unknown keys are ignored.</summary>
+    public List<string> Services { get; set; } = [];
+    public bool HasAdFreeYoutube => Services.Contains("youtube_adfree");
     /// <summary>A multihop route (double VPN): <see cref="Entry"/> node, then <see cref="Exit"/> node. The list item's id is the route id.</summary>
     public bool IsMultihop { get; set; }
     public string? RouteSlug { get; set; }
