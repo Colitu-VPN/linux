@@ -81,7 +81,7 @@ public static class ColituLatency
             || (b[0] == 192 && b[1] == 168));
     }
 
-    private static async Task<int?> ConnectMsAsync(IPAddress address, int port, string? device)
+    internal static async Task<int?> ConnectMsAsync(IPAddress address, int port, string? device)
     {
         try
         {

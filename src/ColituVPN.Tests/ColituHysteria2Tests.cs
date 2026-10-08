@@ -37,4 +37,23 @@ public class ColituHysteria2Tests
         item.Password.Should().Be("secret");
         item.Sni.Should().Be("vpn.example.com");
     }
+
+    [Fact]
+    public void Hysteria2Link_WithMport_KeepsThePortRange()
+    {
+        var item = ServiceLib.Handler.Fmt.Hysteria2Fmt.Resolve("hysteria2://secret@203.0.113.7:8443?sni=vpn.example.com&insecure=0&mport=20000-40000#Colitu", out _)!;
+
+        item.Port.Should().Be(8443);
+        item.GetProtocolExtra().Ports.Should().Be("20000-40000");
+    }
+
+    [Fact]
+    public void MidSessionStall_SwitchesTransportAtMostOncePerMinute()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        ColituVpnService.ShouldSwitchTransport(null, now).Should().BeTrue();
+        ColituVpnService.ShouldSwitchTransport(now.AddSeconds(-30), now).Should().BeFalse();
+        ColituVpnService.ShouldSwitchTransport(now.AddSeconds(-60), now).Should().BeTrue();
+    }
 }

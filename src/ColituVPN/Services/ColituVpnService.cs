@@ -32,14 +32,18 @@ public sealed class ColituVpnService
     private List<ColituVpnServer> _lastServers = [];
     private Timer? _watchdog;
     private readonly ColituKillSwitch _killSwitch = new();
-    private int _watchdogTicks;
+    /// <summary>When the last traffic check of this session ran (Environment.TickCount64).</summary>
+    private long _lastTrafficCheckAt;
     private int _probeFailures;
+    /// <summary>The last automatic transport switch after a mid-session Hysteria2 stall.</summary>
+    private DateTimeOffset? _lastTransportSwitch;
     private bool _autoReconnecting;
     private bool _userDisconnected;
     private CancellationTokenSource? _connectCts;
     private bool _otherVpnWarned;
-    /// <summary>Transports that stalled under load recently, kept last until this time.</summary>
-    private readonly Dictionary<string, DateTimeOffset> _stalledTransports = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Transports that stalled under load recently, per server ("serverId|protocol"), kept last until this time.</summary>
+    // Written by the watchdog (thread pool) and read while a connect orders the transports.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _stalledTransports = new(StringComparer.OrdinalIgnoreCase);
     private string? _activeTransport;
     /// <summary>Names and addresses of the current VPN server; the only hosts kept readable in core log lines.</summary>
     private readonly HashSet<string> _serverHosts = new(StringComparer.OrdinalIgnoreCase);
@@ -219,7 +223,11 @@ public sealed class ColituVpnService
             : _lastServers.FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
     }
 
-    private async Task ConnectCoreAsync(ColituVpnServer? server)
+    /// <param name="keepPreference">
+    /// An automatic transport switch to the node already in use: the device's preferred node on the
+    /// panel (the user's choice, possibly "best server") is left as it is.
+    /// </param>
+    private async Task ConnectCoreAsync(ColituVpnServer? server, bool keepPreference = false)
     {
         if (server is { Available: false })
         {
@@ -246,7 +254,7 @@ public sealed class ColituVpnService
                 LogConnection($"Another VPN adapter holds a default route: {other}");
                 Notice?.Invoke("warn.otherVpn");
             }
-            var config = await FetchConfigAsync(server, token);
+            var config = await FetchConfigAsync(server, token, keepPreference);
             token.ThrowIfCancellationRequested();
             if (config.ServerId.IsNotEmpty() && server?.Id is { } requested && !string.Equals(config.ServerId, requested, StringComparison.OrdinalIgnoreCase))
             {
@@ -280,6 +288,8 @@ public sealed class ColituVpnService
             ConnectedServer = connected;
             ConnectedAt = DateTimeOffset.Now;
             _probeFailures = 0;
+            // First traffic check 10 s (Hysteria2: 5 s) after the connect.
+            _lastTrafficCheckAt = Environment.TickCount64;
             await ApplyKillSwitchForConnectedTunnelAsync();
             KillSwitchRecoveryPending = false;
             SetStatus(ColituVpnStatus.Connected);
@@ -330,7 +340,7 @@ public sealed class ColituVpnService
     /// reached (offline, blocked, down) the last settings received for the same
     /// choice are reused until their offline grace period ends.
     /// </summary>
-    private async Task<ColituVpnConfigResponse> FetchConfigAsync(ColituVpnServer? server, CancellationToken token)
+    private async Task<ColituVpnConfigResponse> FetchConfigAsync(ColituVpnServer? server, CancellationToken token, bool keepPreference = false)
     {
         var cacheKey = server?.Id ?? "auto";
         var watch = Stopwatch.StartNew();
@@ -339,7 +349,7 @@ public sealed class ColituVpnService
         try
         {
             // A route is not a node: it is never stored as this device's preferred node.
-            if (server is not { IsMultihop: true })
+            if (!keepPreference && server is not { IsMultihop: true })
             {
                 await _api.SetPreferredServerAsync(server?.Id, token);
             }
@@ -752,7 +762,8 @@ public sealed class ColituVpnService
     private void StartWatchdog()
     {
         // Suspend and resume show up as a stalled tunnel; the traffic probe below catches them.
-        _watchdog = new Timer(_ => _ = WatchdogTickAsync(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        // Every second: cheap (are the cores running?); the traffic checks keep their own pace.
+        _watchdog = new Timer(_ => _ = WatchdogTickAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         NetworkChange.NetworkAddressChanged += (_, _) =>
         {
             if (Status == ColituVpnStatus.Connected)
@@ -764,7 +775,7 @@ public sealed class ColituVpnService
 
     private async Task WatchdogTickAsync()
     {
-        // The timer fires every 2 s while a probe can take up to 14 s: one tick at a time,
+        // The timer fires every second while a probe can take up to 14 s: one tick at a time,
         // or two overlapping ticks would both start an automatic reconnect.
         if (Interlocked.Exchange(ref _watchdogBusy, 1) == 1)
         {
@@ -805,16 +816,31 @@ public sealed class ColituVpnService
             return;
         }
 
-        // Every 10 s make sure traffic still flows (server gone, network changed, transport stalled).
-        if (++_watchdogTicks % 5 != 0)
+        // Every 10 s make sure traffic still flows (server gone, network changed, transport stalled);
+        // every 5 s on Hysteria2, whose UDP flow mobile networks throttle in the middle of a call.
+        var hysteria = _activeTransport == "hysteria2";
+        var now = Environment.TickCount64;
+        if (now - _lastTrafficCheckAt < (hysteria ? HysteriaCheckIntervalMs : TrafficCheckIntervalMs))
         {
             return;
         }
+        _lastTrafficCheckAt = now;
         var port = AppManager.Instance.GetLocalPort(EInboundProtocol.socks);
-        var probe = await ProbeThroughLocalProxyAsync(port, 1);
+        var probe = await ProbeThroughLocalProxyAsync(port, 1, roundTimeout: hysteria ? TimeSpan.FromSeconds(4) : null);
         if (probe.Success || Status != ColituVpnStatus.Connected || _autoReconnecting)
         {
             _probeFailures = 0;
+            return;
+        }
+        if (hysteria)
+        {
+            // Three silent checks in a row (about 15 s): QUIC is being throttled, not just slow.
+            if (++_probeFailures < HysteriaStallChecks)
+            {
+                return;
+            }
+            _probeFailures = 0;
+            await OnHysteriaStalledAsync(probe.Detail);
             return;
         }
         // One quick confirmation so a single slow page does not trigger a reconnect.
@@ -825,11 +851,129 @@ public sealed class ColituVpnService
         }
         if (_activeTransport != null)
         {
-            _stalledTransports[_activeTransport] = DateTimeOffset.UtcNow.AddMinutes(10);
+            _stalledTransports[StallKey(ConnectedServer?.Id, _activeTransport)] = DateTimeOffset.UtcNow.AddMinutes(10);
             LogConnection($"Transport {_activeTransport} stalled; it goes last for the next 10 minutes");
         }
         LogConnection($"Tunnel carries no traffic ({probe.Detail}); reconnecting");
         await OnTunnelLostAsync();
+    }
+
+    private const long TrafficCheckIntervalMs = 10_000;
+    private const long HysteriaCheckIntervalMs = 5_000;
+    private const int HysteriaStallChecks = 3;
+    private static readonly TimeSpan TransportSwitchMinInterval = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Hysteria2 stopped carrying traffic in the middle of a session (Russian mobile networks
+    /// throttle long-lived UDP flows). With the internet still there, the transport is demoted on
+    /// this server for 10 minutes and the same server is reconnected with the next transport,
+    /// silently (one log line, no notice), at most once a minute. Without internet the usual
+    /// reconnect runs (no demotion: the transport is not to blame).
+    /// </summary>
+    private async Task OnHysteriaStalledAsync(string detail)
+    {
+        if (!await InternetReachableDirectAsync())
+        {
+            LogConnection($"Tunnel carries no traffic ({detail}) and nothing answers outside it either; reconnecting");
+            await OnTunnelLostAsync();
+            return;
+        }
+        if (Status != ColituVpnStatus.Connected || _autoReconnecting || _userDisconnected
+            || !ShouldSwitchTransport(_lastTransportSwitch, DateTimeOffset.UtcNow))
+        {
+            // Switched less than a minute ago: the next three failed checks decide again.
+            return;
+        }
+        _lastTransportSwitch = DateTimeOffset.UtcNow;
+        var server = ConnectedServer;
+        _stalledTransports[StallKey(server?.Id, "hysteria2")] = DateTimeOffset.UtcNow.AddMinutes(10);
+        LogConnection($"Hysteria2 stalled mid-session ({HysteriaStallChecks} checks, last: {detail}); demoted on this server for 10 minutes, switching to the next transport");
+        await SwitchTransportAsync(server);
+    }
+
+    /// <summary>At most one automatic transport switch per <see cref="TransportSwitchMinInterval"/>.</summary>
+    internal static bool ShouldSwitchTransport(DateTimeOffset? lastSwitch, DateTimeOffset now) =>
+        lastSwitch == null || now - lastSwitch.Value >= TransportSwitchMinInterval;
+
+    /// <summary>A Russian and two foreign addresses that accept TCP on 443 (the kill switch lets the last two through).</summary>
+    private static readonly IPAddress[] DirectReferences = [IPAddress.Parse("77.88.8.8"), IPAddress.Parse("1.1.1.1"), IPAddress.Parse("8.8.8.8")];
+
+    /// <summary>
+    /// Whether the internet answers outside the tunnel (TCP 443, bound to the physical interface).
+    /// True when that can't be checked (no physical interface found).
+    /// </summary>
+    private static async Task<bool> InternetReachableDirectAsync()
+    {
+        if (!ColituNetwork.HasDefaultRoute())
+        {
+            return false;
+        }
+        if (ColituNetwork.PhysicalInterfaceName() is not { } device)
+        {
+            return true;
+        }
+        var checks = DirectReferences.Select(address => ColituLatency.ConnectMsAsync(address, 443, device)).ToList();
+        while (checks.Count > 0)
+        {
+            var done = await Task.WhenAny(checks);
+            if (await done != null)
+            {
+                return true;
+            }
+            checks.Remove(done);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Reconnects to <paramref name="server"/> (the node the tunnel ran through) without a notice;
+    /// the stall mark puts the demoted transport last. When that fails, the usual automatic
+    /// reconnect takes over (with its notices: the tunnel is down then).
+    /// </summary>
+    private async Task SwitchTransportAsync(ColituVpnServer? server)
+    {
+        var target = server is { IsMultihop: false, Id.Length: > 0 }
+            ? server
+            : IsAutoSelection ? null : SelectedServer ?? FindServer(_session.SelectedServerId);
+        var failed = false;
+        _autoReconnecting = true;
+        try
+        {
+            if (KillSwitchApplies && !_killSwitch.IsEngaged)
+            {
+                // Before the core goes down: nothing may leave outside the tunnel meanwhile.
+                await EngageKillSwitchAsync("switching transport");
+            }
+            await _connectionLock.WaitAsync();
+            try
+            {
+                if (_userDisconnected)
+                {
+                    return;
+                }
+                SetStatus(ColituVpnStatus.Reconnecting);
+                await StopCoreAsync();
+                await ConnectCoreAsync(target, keepPreference: true);
+                failed = Status != ColituVpnStatus.Connected;
+            }
+            finally
+            {
+                _connectionLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            failed = true;
+            LogConnection($"Transport switch did not connect: {ex.Message}");
+        }
+        finally
+        {
+            _autoReconnecting = false;
+        }
+        if (failed && !_userDisconnected)
+        {
+            await OnTunnelLostAsync();
+        }
     }
 
     private async Task OnTunnelLostAsync()
@@ -1076,6 +1220,11 @@ public sealed class ColituVpnService
         _config.CoreBasicItem.LogEnabled = false;
         // Hysteria2 is not an Xray protocol; it runs on the bundled sing-box core.
         _config.CoreTypeItem = [new CoreTypeItem { ConfigType = EConfigType.Hysteria2, CoreType = ECoreType.sing_box }];
+        // Port hopping (mport on the panel's hysteria2:// links): a new UDP port every 30 s, so a
+        // mobile network that throttles one long-lived UDP flow never sees one. Both cores ignore
+        // values under 5 s; a stale value from an old settings file must not slow or break the hops.
+        _config.HysteriaItem ??= new HysteriaItem();
+        _config.HysteriaItem.HopInterval = Global.Hysteria2DefaultHopInt;
         _coreReady = true;
     }
 
@@ -1124,7 +1273,7 @@ public sealed class ColituVpnService
 
         var latency = await MeasureTransportLatencyAsync(ordered);
         ordered = ordered
-            .OrderBy(item => TransportRank(item.Candidate.Protocol, latency.GetValueOrDefault(item.Candidate.Protocol, -1)))
+            .OrderBy(item => TransportRank(item.Candidate.Protocol, latency.GetValueOrDefault(item.Candidate.Protocol, -1), config.ServerId ?? server?.Id))
             .ThenBy(item => latency.GetValueOrDefault(item.Candidate.Protocol, int.MaxValue))
             .ToList();
         LogConnection($"Transport order: {string.Join(" > ", ordered.Select(item => $"{item.Candidate.Protocol}({LatencyText(latency, item.Candidate.Protocol)})"))}");
@@ -1181,7 +1330,7 @@ public sealed class ColituVpnService
     /// this core, plain Shadowsocks the least; a transport that stalled recently
     /// goes to the back of the line for a while.
     /// </summary>
-    private int TransportRank(string protocol, int latencyMs)
+    private int TransportRank(string protocol, int latencyMs, string? serverId)
     {
         // Hysteria2 (QUIC) keeps working on lossy links where TCP transports stall, so it leads;
         // the TCP transports then follow in measured-latency order (ThenBy), unreachable ones last.
@@ -1194,12 +1343,15 @@ public sealed class ColituVpnService
         {
             rank += 5;
         }
-        if (_stalledTransports.TryGetValue(protocol, out var until) && until > DateTimeOffset.UtcNow)
+        if (_stalledTransports.TryGetValue(StallKey(serverId, protocol), out var until) && until > DateTimeOffset.UtcNow)
         {
             rank += 10;
         }
         return rank;
     }
+
+    /// <summary>A transport blocked on one server says nothing about the same transport on another.</summary>
+    private static string StallKey(string? serverId, string protocol) => $"{serverId ?? "-"}|{protocol}";
 
     /// <summary>
     /// Starts the core with each candidate transport until traffic flows through
@@ -1244,7 +1396,7 @@ public sealed class ColituVpnService
                     // a server still applying new ones, not a property of the transport.
                     if (!_credentialsRefused)
                     {
-                        _stalledTransports[candidate.Protocol] = DateTimeOffset.UtcNow.AddMinutes(10);
+                        _stalledTransports[StallKey(config.ServerId ?? server?.Id, candidate.Protocol)] = DateTimeOffset.UtcNow.AddMinutes(10);
                     }
                     if (isLast)
                     {
@@ -1676,18 +1828,19 @@ public sealed class ColituVpnService
 
     /// <summary>
     /// Fetches small "connectivity check" pages through the tunnel, all at once,
-    /// and succeeds on the first answer. Two rounds of at most seven seconds.
+    /// and succeeds on the first answer. Two rounds of at most seven seconds (or <paramref name="roundTimeout"/>).
     /// </summary>
-    private static async Task<ColituTrafficProbeResult> ProbeThroughLocalProxyAsync(int port, int rounds = 2, CancellationToken token = default, Func<bool>? giveUp = null)
+    private static async Task<ColituTrafficProbeResult> ProbeThroughLocalProxyAsync(int port, int rounds = 2, CancellationToken token = default, Func<bool>? giveUp = null, TimeSpan? roundTimeout = null)
     {
+        var timeout = roundTimeout ?? TimeSpan.FromSeconds(7);
         var handler = new SocketsHttpHandler
         {
             Proxy = new WebProxy($"{Global.Socks5Protocol}{Global.Loopback}:{port}"),
             UseProxy = true,
-            ConnectTimeout = TimeSpan.FromSeconds(5)
+            ConnectTimeout = timeout < TimeSpan.FromSeconds(5) ? timeout : TimeSpan.FromSeconds(5)
         };
 
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(7) };
+        using var client = new HttpClient(handler) { Timeout = timeout };
         var speedProbeUrl = AppManager.Instance.Config.SpeedTestItem.SpeedPingTestUrl.NullIfEmpty()
             ?? Global.SpeedPingTestUrls.First();
         var probeUrls = new[] { speedProbeUrl, "https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204", "https://www.apple.com/library/test/success.html", "http://www.msftconnecttest.com/connecttest.txt" }
@@ -1699,7 +1852,7 @@ public sealed class ColituVpnService
         for (var round = 1; round <= rounds; round++)
         {
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-            budget.CancelAfter(TimeSpan.FromSeconds(7));
+            budget.CancelAfter(timeout);
             var pending = probeUrls.Select(url => ProbeOnceAsync(client, url, errors, budget.Token)).ToList();
             while (pending.Count > 0)
             {
