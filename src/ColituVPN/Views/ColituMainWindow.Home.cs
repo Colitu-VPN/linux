@@ -38,7 +38,7 @@ public partial class ColituMainWindow
         {
             mode.IsCheckedChanged += async (sender, _) => await ModeCheckedAsync(sender);
         }
-        foreach (var box in new[] { HomeKillSwitch, SettingsKillSwitch, HomeAutoConnect, SettingsAutoConnect, SettingsDns, SettingsAdBlock, SettingsTray })
+        foreach (var box in new[] { HomeKillSwitch, SettingsKillSwitch, HomeAutoConnect, SettingsAutoConnect, SettingsDns, SettingsAdBlock, SettingsPrivacy, SettingsTray })
         {
             box.IsCheckedChanged += async (sender, _) => await PreferenceChangedAsync(sender);
         }
@@ -395,6 +395,7 @@ public partial class ColituMainWindow
             SettingsDns.IsChecked = preferences.DnsLeakProtectionEnabled;
             SettingsAdBlock.IsChecked = preferences.AdBlockEnabled;
             SettingsAdBlockRow.IsVisible = ColituVpnService.AdBlockAvailable;
+            SettingsPrivacy.IsChecked = preferences.PrivacyModeEnabled;
             SettingsTray.IsChecked = preferences.CloseToTray;
             SettingsStartup.IsChecked = _vpn.LaunchAtStartup;
             ApplySplitToUi();
@@ -443,6 +444,7 @@ public partial class ColituMainWindow
             : box == HomeAutoConnect || box == SettingsAutoConnect ? preferences with { AutoConnectEnabled = on }
             : box == SettingsDns ? preferences with { DnsLeakProtectionEnabled = on }
             : box == SettingsAdBlock ? preferences with { AdBlockEnabled = on }
+            : box == SettingsPrivacy ? preferences with { PrivacyModeEnabled = on }
             : box == SettingsTray ? preferences with { CloseToTray = on }
             : preferences;
         await SavePreferencesAsync(preferences);
@@ -453,6 +455,7 @@ public partial class ColituMainWindow
         var tunnelSettingsChanged = preferences.ConnectionMode != _vpn.Preferences.ConnectionMode
             || preferences.DnsLeakProtectionEnabled != _vpn.Preferences.DnsLeakProtectionEnabled
             || preferences.AdBlockEnabled != _vpn.Preferences.AdBlockEnabled
+            || preferences.PrivacyModeEnabled != _vpn.Preferences.PrivacyModeEnabled
             || !preferences.SameSplitTunnel(_vpn.Preferences);
         var connected = _vpn.Status == ColituVpnStatus.Connected;
 

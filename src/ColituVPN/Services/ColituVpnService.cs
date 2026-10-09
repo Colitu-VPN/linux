@@ -1538,24 +1538,27 @@ public sealed class ColituVpnService
         }
 
         await ConfigHandler.SetDefaultRouting(_config, routing);
-        LogConnection(RussianSitesDirect(serverCountry)
+        LogConnection(RussianSitesDirect(serverCountry, preferences.PrivacyModeEnabled)
             ? "Routing profile applied: DNS protection, Russian sites direct"
-            : "Routing profile applied: DNS protection, Russian sites through the Russian server");
+            : preferences.PrivacyModeEnabled
+                ? "Routing profile applied: DNS protection, privacy mode (all traffic through the VPN)"
+                : "Routing profile applied: DNS protection, Russian sites through the Russian server");
     }
 
     /// <summary>
     /// Russian sites skip the tunnel unless the server itself is in Russia: someone abroad who
     /// picks the Moscow server wants exactly those sites to see a Russian address.
+    /// Privacy mode sends everything through the tunnel, Russian sites included.
     /// </summary>
-    internal static bool RussianSitesDirect(string? serverCountry) =>
-        !string.Equals(serverCountry?.Trim(), "RU", StringComparison.OrdinalIgnoreCase);
+    internal static bool RussianSitesDirect(string? serverCountry, bool privacyMode = false) =>
+        !privacyMode && !string.Equals(serverCountry?.Trim(), "RU", StringComparison.OrdinalIgnoreCase);
 
     internal static List<RulesItem> BuildColituRoutingRules(ColituVpnPreferences preferences, string? serverCountry = null)
     {
         preferences = preferences.Normalize();
         // "Only selected apps and sites use the VPN": everything else is direct anyway, and a
         // selected app's Russian sites must stay in the tunnel the user asked for.
-        var ruDirect = RussianSitesDirect(serverCountry) && !ColituSplitTunnel.IsIncludeActive(preferences);
+        var ruDirect = RussianSitesDirect(serverCountry, preferences.PrivacyModeEnabled) && !ColituSplitTunnel.IsIncludeActive(preferences);
         var rules = new List<RulesItem>();
 
         rules.Add(new RulesItem
@@ -2082,7 +2085,9 @@ public sealed class ColituVpnService
         {
             if (!File.Exists(StatePath()))
             {
-                _session = _session with { PreferencesMigration = CurrentPreferencesMigration };
+                // Fresh install: privacy mode (all traffic through the VPN) is the default. A saved state
+                // without the property keeps the old behaviour (the record default stays false).
+                _session = _session with { PreferencesMigration = CurrentPreferencesMigration, Preferences = ColituVpnPreferences.ForNewInstall() };
                 return;
             }
             _session = JsonSerializer.Deserialize<ColituVpnSession>(File.ReadAllText(StatePath()), _jsonOptions) ?? new();
@@ -2438,8 +2443,14 @@ public sealed record ColituVpnPreferences(
     bool AdBlockEnabled = false,
     string SplitTunnelMode = ColituSplitTunnelModes.Off,
     List<string>? SplitTunnelDomains = null,
-    List<string>? SplitTunnelIps = null)
+    List<string>? SplitTunnelIps = null,
+    // Privacy mode: no direct-routing exceptions (Russian sites and addresses go through the tunnel too).
+    // Off here so states saved before the setting existed keep their behaviour; new installs start with ForNewInstall() (on).
+    bool PrivacyModeEnabled = false)
 {
+    /// <summary>Preferences of a first run (no saved state yet): privacy mode on. The record default stays false for saved states that predate the setting.</summary>
+    public static ColituVpnPreferences ForNewInstall() => new() { PrivacyModeEnabled = true };
+
     public bool IsTunMode => string.Equals(ConnectionMode, ColituConnectionModes.Tun, StringComparison.OrdinalIgnoreCase);
 
     public ColituVpnPreferences Normalize()

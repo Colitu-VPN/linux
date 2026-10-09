@@ -36,6 +36,32 @@ public class ColituRuDirectTests
     }
 
     [Theory]
+    [InlineData("DE", false, true)]
+    [InlineData(null, false, true)]
+    [InlineData("DE", true, false)]
+    [InlineData("RU", false, false)]
+    [InlineData("RU", true, false)]
+    public void RussianSitesDirect_OnlyWithoutPrivacyModeAndOutsideRussia(string? country, bool privacyMode, bool expected)
+    {
+        ColituVpnService.RussianSitesDirect(country, privacyMode).Should().Be(expected);
+    }
+
+    [Fact]
+    public void PrivacyMode_IsOnForNewInstalls_OffForSavedStatesWithoutTheProperty()
+    {
+        ColituVpnPreferences.ForNewInstall().PrivacyModeEnabled.Should().BeTrue();
+        new ColituVpnPreferences().PrivacyModeEnabled.Should().BeFalse();
+
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var old = System.Text.Json.JsonSerializer.Deserialize<ColituVpnPreferences>("{\"KillSwitchEnabled\":true,\"AdBlockEnabled\":true}", options)!;
+        old.PrivacyModeEnabled.Should().BeFalse();
+
+        var rules = ColituVpnService.BuildColituRoutingRules(ColituVpnPreferences.ForNewInstall(), "DE");
+        rules.Single(r => r.Id == "colitu-ru-direct-domain").Enabled.Should().BeFalse();
+        rules.Single(r => r.Id == "colitu-ru-direct-ip").Enabled.Should().BeFalse();
+    }
+
+    [Theory]
     [InlineData("RU")]
     [InlineData("ru")]
     public void RussianServer_KeepsRussianSitesInTheTunnel(string country)

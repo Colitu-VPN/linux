@@ -470,6 +470,14 @@
                                             Classes="bare"
                                             PlaceholderText="{s:T auth.emailHint}" />
                                     </Border>
+                                    <TextBlock
+                                        x:Name="RegisterEmailHint"
+                                        Margin="2,6,0,0"
+                                        FontSize="12"
+                                        Foreground="{StaticResource MutedBrush}"
+                                        IsVisible="False"
+                                        Text="{s:T auth.registerEmailHint}"
+                                        TextWrapping="Wrap" />
 
                                     <TextBlock
                                         Margin="2,16,0,8"
@@ -852,6 +860,7 @@
                                 Classes="kicker"
                                 Text="{s:T mfa.kicker}" />
                             <TextBlock
+                                x:Name="MfaTitle"
                                 Margin="0,10,0,0"
                                 Classes="h1"
                                 Text="{s:T mfa.title}" />
@@ -2047,6 +2056,25 @@
                                                 </StackPanel>
                                                 <CheckBox
                                                     x:Name="SettingsAdBlock"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid
+                                                x:Name="SettingsPrivacyRow"
+                                                Margin="0,18,0,0"
+                                                ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T privacy.title}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T privacy.hint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsPrivacy"
                                                     Grid.Column="1"
                                                     Theme="{StaticResource Switch}" />
                                             </Grid>

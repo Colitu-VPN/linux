@@ -18,6 +18,18 @@ public class ColituMfaTests
         challenge.ExpiresInSeconds.Should().Be(300);
     }
 
+    [Theory]
+    [InlineData("""{"error":{"code":"MFA_REQUIRED"},"mfa_token":"t","mfa_method":"email","mfa_expires_in":600}""", "email", 600)]
+    [InlineData("""{"error":{"code":"MFA_REQUIRED"},"mfa_token":"t","mfa_method":"totp"}""", "totp", 300)]
+    [InlineData("""{"error":{"code":"MFA_REQUIRED"},"mfa_token":"t"}""", "totp", 300)]
+    public void Challenge_ReadsTheMethod(string body, string method, int expires)
+    {
+        var challenge = ColituAuthService.ParseMfaChallenge(HttpStatusCode.Forbidden, body);
+        challenge.Should().NotBeNull();
+        challenge!.Method.Should().Be(method);
+        challenge.ExpiresInSeconds.Should().Be(expires);
+    }
+
     [Fact]
     public void Challenge_DefaultsToFiveMinutesWithoutExpiry()
     {

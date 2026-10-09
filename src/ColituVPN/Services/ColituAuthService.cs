@@ -477,7 +477,7 @@ public sealed class ColituAuthService
             if (mfaCapable && response.StatusCode == HttpStatusCode.Forbidden
                 && ParseMfaChallenge(response.StatusCode, await response.Content.ReadAsStringAsync()) is { } challenge)
             {
-                return ColituAuthResult.Mfa(email, challenge.Token, challenge.ExpiresInSeconds);
+                return ColituAuthResult.Mfa(email, challenge.Token, challenge.ExpiresInSeconds, challenge.Method);
             }
             await EnsureSuccessAsync(response);
             var tokens = await ReadJsonAsync<ColituTokenDto>(response);
@@ -572,7 +572,11 @@ public sealed class ColituAuthService
             var expiresIn = root.TryGetProperty("mfa_expires_in", out var expires) && expires.TryGetInt32(out var seconds) && seconds > 0
                 ? seconds
                 : 300;
-            return new ColituMfaChallenge(token, expiresIn);
+            var method = root.TryGetProperty("mfa_method", out var methodElement) && methodElement.ValueKind == JsonValueKind.String
+                && string.Equals(methodElement.GetString(), ColituMfaChallenge.MethodEmail, StringComparison.OrdinalIgnoreCase)
+                ? ColituMfaChallenge.MethodEmail
+                : ColituMfaChallenge.MethodTotp;
+            return new ColituMfaChallenge(token, expiresIn, method);
         }
         catch (JsonException)
         {
@@ -1148,6 +1152,9 @@ public sealed class ColituAuthService
             "MFA_REQUIRED_UPDATE_APP" => loc["mfa.err.updateApp"],
             ColituDevicePause.ErrorCode => loc["err.devicePaused"],
             "INVALID_REGISTRATION" => loc["err.registration"],
+            "DISPOSABLE_EMAIL" => loc["err.disposableEmail"],
+            "PASSWORD_BREACHED" => loc["err.passwordBreached"],
+            "SIGNUP_IP_LIMIT" => loc["err.signupIpLimit"],
             "RATE_LIMITED" => loc["err.rateLimited"],
             "DEVICE_LIMIT_REACHED" or "DEVICE_LIMIT_EXCEEDED" => loc["err.deviceLimit"],
             "REGION_NOT_SUPPORTED" => loc["err.region"],
@@ -1234,6 +1241,9 @@ public sealed class ColituAuthResult
     public bool RequiresMfa { get; init; }
     public string? MfaToken { get; init; }
     public int MfaExpiresInSeconds { get; init; }
+    /// <summary>"totp" (authenticator app) or "email" (code mailed after an unfamiliar-country sign-in).</summary>
+    public string MfaMethod { get; init; } = ColituMfaChallenge.MethodTotp;
+    public bool MfaByEmail => MfaMethod == ColituMfaChallenge.MethodEmail;
     public ColituUser? User { get; init; }
     public bool RequiresEmailVerification { get; init; }
     public bool? VerificationEmailSent { get; init; }
@@ -1247,7 +1257,7 @@ public sealed class ColituAuthResult
         Message = message
     };
     public static ColituAuthResult Fail(string error, string? errorCode = null) => new() { Success = false, Error = error, ErrorCode = errorCode };
-    public static ColituAuthResult Mfa(string email, string token, int expiresInSeconds) => new() { Success = true, RequiresMfa = true, MfaToken = token, MfaExpiresInSeconds = expiresInSeconds, Message = email };
+    public static ColituAuthResult Mfa(string email, string token, int expiresInSeconds, string method = ColituMfaChallenge.MethodTotp) => new() { Success = true, RequiresMfa = true, MfaToken = token, MfaExpiresInSeconds = expiresInSeconds, MfaMethod = method, Message = email };
     public static ColituAuthResult Verification(string email) => new() { Success = true, RequiresEmailVerification = true, Message = email };
 }
 
@@ -1315,7 +1325,12 @@ public sealed class ColituDevice
 }
 
 /// <summary>Second sign-in step: the token that stands for the checked password, valid for a few minutes.</summary>
-public sealed record ColituMfaChallenge(string Token, int ExpiresInSeconds);
+/// <summary>Method: "totp" (authenticator app, default) or "email" (6-digit code mailed after a sign-in from an unfamiliar country).</summary>
+public sealed record ColituMfaChallenge(string Token, int ExpiresInSeconds, string Method = ColituMfaChallenge.MethodTotp)
+{
+    public const string MethodTotp = "totp";
+    public const string MethodEmail = "email";
+}
 
 public sealed class ColituApiException(HttpStatusCode statusCode, string message, string? errorCode = null) : Exception(message)
 {
