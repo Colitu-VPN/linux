@@ -1285,6 +1285,14 @@
                                     Content="{s:T home.unblock}"
                                     IsVisible="False"
                                     Theme="{StaticResource LinkButton}" />
+                                <!-- A picked server where every transport failed: switch to the automatic choice and connect, only when tapped. -->
+                                <Button
+                                    x:Name="TryFastestButton"
+                                    Margin="0,12,0,0"
+                                    HorizontalAlignment="Center"
+                                    Content="{s:T connect.tryFastest}"
+                                    IsVisible="False"
+                                    Theme="{StaticResource LinkButton}" />
                             </StackPanel>
                         </Grid>
 
@@ -1293,6 +1301,48 @@
                             HorizontalScrollBarVisibility="Disabled"
                             VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="HomeCards">
+                                <!-- Notice from the panel (usage warning, campaign); closable, see ColituMainWindow.Notices.cs -->
+                                <Border
+                                    x:Name="NoticeBanner"
+                                    Margin="0,0,0,16"
+                                    Classes="neutralBox"
+                                    IsVisible="False">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock
+                                                x:Name="NoticeTitle"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Foreground="{StaticResource TextBrush}"
+                                                TextWrapping="Wrap" />
+                                            <TextBlock
+                                                x:Name="NoticeBody"
+                                                FontSize="13"
+                                                Foreground="{StaticResource MutedBrush}"
+                                                TextWrapping="Wrap" />
+                                            <Button
+                                                x:Name="NoticeAction"
+                                                Margin="0,4,0,0"
+                                                HorizontalAlignment="Left"
+                                                IsVisible="False"
+                                                Theme="{StaticResource LinkButton}" />
+                                        </StackPanel>
+                                        <Button
+                                            x:Name="NoticeClose"
+                                            Grid.Column="1"
+                                            Margin="10,0,0,0"
+                                            VerticalAlignment="Top"
+                                            AutomationProperties.Name="{s:T notice.close}"
+                                            Theme="{StaticResource IconButton}"
+                                            ToolTip.Tip="{s:T notice.close}">
+                                            <Path
+                                                Width="11"
+                                                Height="11"
+                                                Classes="stroke"
+                                                Data="{StaticResource IconX}" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
                                 <!-- End of the trial or plan (closable for the day) -->
                                 <Border
                                     x:Name="PlanNoticeBanner"
@@ -1455,8 +1505,9 @@
                                     </StackPanel>
                                 </Border>
 
-                                <!-- Quick settings -->
+                                <!-- Quick settings (Advanced mode) -->
                                 <Border
+                                    x:Name="QuickSettingsCard"
                                     Margin="0,16,0,0"
                                     Padding="20,18,20,12"
                                     Classes="panel">
@@ -1517,6 +1568,22 @@
                                         </Grid>
                                     </StackPanel>
                                 </Border>
+                                <!-- Simple mode: hidden expert settings that act, and the one-tap way to Advanced mode. -->
+                                <Button
+                                    x:Name="AdvancedSettingsOnButton"
+                                    Margin="0,16,0,0"
+                                    HorizontalAlignment="Center"
+                                    Content="{s:T mode.advancedSettingsOn}"
+                                    FontSize="12.5"
+                                    IsVisible="False"
+                                    Theme="{StaticResource LinkButton}" />
+                                <Button
+                                    x:Name="HomeAdvancedButton"
+                                    Margin="0,12,0,0"
+                                    HorizontalAlignment="Center"
+                                    Content="{s:T mode.advanced}"
+                                    IsVisible="False"
+                                    Theme="{StaticResource LinkButton}" />
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
@@ -1563,6 +1630,7 @@
                             </Border>
                         </Grid>
                         <Border
+                            x:Name="CategoryHost"
                             Grid.Row="1"
                             Margin="0,0,0,16"
                             HorizontalAlignment="Left"
@@ -1971,7 +2039,29 @@
                                 Margin="0,10,0,0"
                                 Classes="h1"
                                 Text="{s:T settings.title}" />
-                            <Grid Margin="0,22,0,0" ColumnDefinitions="*,16,*">
+                            <!-- Simple / Advanced mode: one switch, at the very top. -->
+                            <Border
+                                Margin="0,22,0,0"
+                                Padding="24,20"
+                                Classes="panel">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock
+                                            FontSize="14.5"
+                                            FontWeight="Medium"
+                                            Text="{s:T mode.advanced}" />
+                                        <TextBlock
+                                            Margin="0,3,0,0"
+                                            Classes="small"
+                                            Text="{s:T mode.advancedHint}" />
+                                    </StackPanel>
+                                    <CheckBox
+                                        x:Name="SettingsAdvanced"
+                                        Grid.Column="1"
+                                        Theme="{StaticResource Switch}" />
+                                </Grid>
+                            </Border>
+                            <Grid Margin="0,16,0,0" ColumnDefinitions="*,16,*">
                                 <StackPanel>
                                     <Border Padding="24" Classes="panel">
                                         <StackPanel>
@@ -2075,6 +2165,25 @@
                                                 </StackPanel>
                                                 <CheckBox
                                                     x:Name="SettingsPrivacy"
+                                                    Grid.Column="1"
+                                                    Theme="{StaticResource Switch}" />
+                                            </Grid>
+                                            <Grid
+                                                x:Name="SettingsWarmSpareRow"
+                                                Margin="0,18,0,0"
+                                                ColumnDefinitions="*,Auto">
+                                                <StackPanel Margin="0,0,16,0">
+                                                    <TextBlock
+                                                        FontSize="14.5"
+                                                        FontWeight="Medium"
+                                                        Text="{s:T settings.warmSpare}" />
+                                                    <TextBlock
+                                                        Margin="0,3,0,0"
+                                                        Classes="small"
+                                                        Text="{s:T settings.warmSpareHint}" />
+                                                </StackPanel>
+                                                <CheckBox
+                                                    x:Name="SettingsWarmSpare"
                                                     Grid.Column="1"
                                                     Theme="{StaticResource Switch}" />
                                             </Grid>
@@ -2265,6 +2374,7 @@
 
                             <!-- Split tunneling -->
                             <Border
+                                x:Name="SplitCard"
                                 Margin="0,16,0,0"
                                 Padding="24"
                                 Classes="panel">

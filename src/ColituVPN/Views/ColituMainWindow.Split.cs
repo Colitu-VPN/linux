@@ -62,7 +62,7 @@ public partial class ColituMainWindow
     {
         var preferences = _vpn.Preferences;
         var count = ColituSplitTunnel.EffectiveCount(preferences);
-        SplitChip.IsVisible = count > 0;
+        SplitChip.IsVisible = count > 0 && _vpn.AdvancedMode;
         SplitChipText.Text = count > 0
             ? Loc.I.Format(preferences.SplitTunnelMode == ColituSplitTunnelModes.Include ? "home.split.include" : "home.split.exclude", ("n", count))
             : "";

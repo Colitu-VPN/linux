@@ -30,6 +30,13 @@ public partial class ColituMainWindow
         };
         ConnectButton.Click += async (_, _) => await ToggleConnectionAsync();
         UnblockButton.Click += async (_, _) => await GuardAsync("Unblock", TurnOffKillSwitchBlockAsync);
+        // "Try the fastest server": automatic mode, then connect (only on this tap).
+        TryFastestButton.Click += async (_, _) =>
+        {
+            _vpn.SelectAuto();
+            ApplyLocationCard();
+            await ToggleConnectionAsync();
+        };
         LocationCard.PointerReleased += (_, _) => Navigate("locations");
         ChangeServerButton.Click += (_, _) => Navigate("locations");
         PlanCtaButton.Click += (_, _) => Navigate("plan");
@@ -38,10 +45,11 @@ public partial class ColituMainWindow
         {
             mode.IsCheckedChanged += async (sender, _) => await ModeCheckedAsync(sender);
         }
-        foreach (var box in new[] { HomeKillSwitch, SettingsKillSwitch, HomeAutoConnect, SettingsAutoConnect, SettingsDns, SettingsAdBlock, SettingsPrivacy, SettingsTray })
+        foreach (var box in new[] { HomeKillSwitch, SettingsKillSwitch, HomeAutoConnect, SettingsAutoConnect, SettingsDns, SettingsAdBlock, SettingsPrivacy, SettingsWarmSpare, SettingsTray })
         {
             box.IsCheckedChanged += async (sender, _) => await PreferenceChangedAsync(sender);
         }
+        HookUiMode();
     }
 
     /// <summary>
@@ -106,7 +114,7 @@ public partial class ColituMainWindow
             : loc["home.title.off"];
         HomeSubtitle.Text = on ? loc.Format("home.sub.on", ("server", ServerLabel(_vpn.ConnectedServer) ?? loc["server.auto"]))
             : blocked ? loc[_vpn.KillSwitchRecoveryPending ? "home.sub.crashBlocked" : "home.sub.blocked"]
-            : busy ? loc["home.sub.connecting"]
+            : busy ? loc[_vpn.ConnectStage ?? "home.sub.connecting"]
             : _planRequired ? loc["home.sub.noplan"]
             : status == ColituVpnStatus.Error && _vpn.LastError is { Length: > 0 } error ? error
             : loc["home.sub.off"];
@@ -116,10 +124,10 @@ public partial class ColituMainWindow
             : loc["home.tap"];
         ToolTip.SetTip(ConnectButton, on ? loc["home.disconnect"] : busy ? loc["home.cancel"] : loc["home.connect"]);
         var protocol = on ? _vpn.ConnectedProtocol : null;
-        ProtocolChip.IsVisible = protocol is { Length: > 0 };
+        ProtocolChip.IsVisible = protocol is { Length: > 0 } && _vpn.AdvancedMode;
         ProtocolChipText.Text = protocol is { Length: > 0 } ? $"{loc["home.protocol"]} · {ColituTransportNames.Of(protocol, loc)}".ToUpper(loc.Culture) : "";
         // Proxy mode leaves DNS, UDP/WebRTC, IPv6 and proxy-unaware apps outside the tunnel: say so while it runs.
-        ProxyCoverageWarning.IsVisible = on && !_vpn.Preferences.IsTunMode;
+        ProxyCoverageWarning.IsVisible = on && !_vpn.Preferences.IsTunMode && _vpn.AdvancedMode;
 
         StatusChipText.Text = on ? loc["status.protected"]
             : blocked ? loc["status.blocked"]
@@ -135,6 +143,7 @@ public partial class ColituMainWindow
             _trayConnectItem.Header = on || busy || blocked ? loc["tray.disconnect"] : loc["tray.connect"];
         }
         UnblockButton.IsVisible = blocked;
+        TryFastestButton.IsVisible = status == ColituVpnStatus.Error && _vpn.OfferFastestServer && !_vpn.IsAutoSelection;
 
         if (_shownStatus != status)
         {
@@ -143,6 +152,7 @@ public partial class ColituMainWindow
         }
         ApplyLocationCard();
         UpdateSessionTimer();
+        ApplyHomeMode();
     }
 
     private void UpdateSessionTimer()
@@ -235,9 +245,10 @@ public partial class ColituMainWindow
     // ── Location card ──────────────────────────────────────────────────────
     private void ApplyLocationCard()
     {
+        // "Best server" shows the server it connects to first (the same rank[0] the connect uses).
         var server = _vpn.Status is ColituVpnStatus.Connected && _vpn.ConnectedServer != null
             ? _vpn.ConnectedServer
-            : _vpn.IsAutoSelection ? null : _vpn.SelectedServer ?? _servers.FirstOrDefault(s => s.Id == _vpn.SavedServerId);
+            : _vpn.IsAutoSelection ? _vpn.RecommendedServer : _vpn.SelectedServer ?? _servers.FirstOrDefault(s => s.Id == _vpn.SavedServerId);
         var row = server == null ? ColituServerRow.Auto() : ColituServerRow.From(server);
         if (_vpn.IsAutoSelection && server != null)
         {
@@ -396,11 +407,13 @@ public partial class ColituMainWindow
             SettingsAdBlock.IsChecked = preferences.AdBlockEnabled;
             SettingsAdBlockRow.IsVisible = ColituVpnService.AdBlockAvailable;
             SettingsPrivacy.IsChecked = preferences.PrivacyModeEnabled;
+            SettingsWarmSpare.IsChecked = preferences.WarmSpareEnabled;
             SettingsTray.IsChecked = preferences.CloseToTray;
             SettingsStartup.IsChecked = _vpn.LaunchAtStartup;
             ApplySplitToUi();
             ApplyRotationUi();
             ApplyModeHint();
+            ApplyUiMode();
         }
         finally
         {
@@ -413,7 +426,7 @@ public partial class ColituMainWindow
         var tun = _vpn.Preferences.IsTunMode;
         ModeHint.Text = Loc.I[tun ? "settings.mode.tunHint" : "settings.mode.proxyHint"];
         HomeProxyWarning.IsVisible = SettingsProxyWarning.IsVisible = !tun;
-        ProxyCoverageWarning.IsVisible = !tun && _vpn.Status == ColituVpnStatus.Connected;
+        ProxyCoverageWarning.IsVisible = !tun && _vpn.Status == ColituVpnStatus.Connected && _vpn.AdvancedMode;
         ApplySplitVisibility(SelectedSplitMode());
         ApplySplitChip();
     }
@@ -445,6 +458,7 @@ public partial class ColituMainWindow
             : box == SettingsDns ? preferences with { DnsLeakProtectionEnabled = on }
             : box == SettingsAdBlock ? preferences with { AdBlockEnabled = on }
             : box == SettingsPrivacy ? preferences with { PrivacyModeEnabled = on }
+            : box == SettingsWarmSpare ? preferences with { WarmSpareEnabled = on }
             : box == SettingsTray ? preferences with { CloseToTray = on }
             : preferences;
         await SavePreferencesAsync(preferences);
@@ -456,6 +470,7 @@ public partial class ColituMainWindow
             || preferences.DnsLeakProtectionEnabled != _vpn.Preferences.DnsLeakProtectionEnabled
             || preferences.AdBlockEnabled != _vpn.Preferences.AdBlockEnabled
             || preferences.PrivacyModeEnabled != _vpn.Preferences.PrivacyModeEnabled
+            || preferences.WarmSpareEnabled != _vpn.Preferences.WarmSpareEnabled
             || !preferences.SameSplitTunnel(_vpn.Preferences);
         var connected = _vpn.Status == ColituVpnStatus.Connected;
 

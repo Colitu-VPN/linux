@@ -207,6 +207,49 @@ public static class ColituNetwork
         }
     }
 
+    /// <summary>Bytes sent and received so far on the physical interface; -1 when unknown.</summary>
+    public static long PhysicalBytes()
+    {
+        try
+        {
+            if (PhysicalInterfaceName() is not { } name)
+            {
+                return -1;
+            }
+            var statistics = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(adapter => adapter.Name == name)?.GetIPStatistics();
+            return statistics == null ? -1 : statistics.BytesReceived + statistics.BytesSent;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// The kind of link that carries the internet, for the Adaptive Connect network key: wifi,
+    /// ethernet, cellular (a WWAN modem or a PPP dial-up link) or other.
+    /// </summary>
+    public static string LinkKind()
+    {
+        try
+        {
+            if (PhysicalInterfaceName() is { } device)
+            {
+                return IsWireless(device) ? "wifi" : IsCellular(device) ? "cellular" : "ethernet";
+            }
+            // PPP and WWAN links count as virtual above (no SO_BINDTODEVICE pinning there).
+            return DefaultRoutes().Any(route => IsCellular(route.Interface)) ? "cellular" : "other";
+        }
+        catch
+        {
+            return "other";
+        }
+    }
+
+    private static bool IsCellular(string name) =>
+        name.StartsWith("wwan", StringComparison.Ordinal) || name.StartsWith("ppp", StringComparison.Ordinal)
+        || name.StartsWith("rmnet", StringComparison.Ordinal) || name.StartsWith("wwp", StringComparison.Ordinal);
+
     /// <summary>True once any interface has an IPv4 default route (the network is usable).</summary>
     public static bool HasDefaultRoute()
     {

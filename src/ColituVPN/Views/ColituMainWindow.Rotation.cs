@@ -46,7 +46,7 @@ public partial class ColituMainWindow
         {
             ForgetRotationStatus();
         }
-        RouteChip.IsVisible = text != null;
+        RouteChip.IsVisible = text != null && _vpn.AdvancedMode;
         RouteChipText.Text = text?.ToUpper(Loc.I.Culture) ?? "";
     }
 
@@ -165,7 +165,7 @@ public partial class ColituMainWindow
         HookRotationUi();
         var preference = _vpn.Rotation;
         // An older panel has no rotation: the card stays hidden.
-        RotationCard.IsVisible = preference != null;
+        RotationCard.IsVisible = preference != null && _vpn.AdvancedMode;
         if (preference == null)
         {
             return;

@@ -69,6 +69,7 @@ public partial class ColituMainWindow : Window
         WireMfa();
         WireRecovery();
         WirePaused();
+        WireNotices();
         WireSplit();
         WireHome();
         WireLocations();
@@ -213,6 +214,7 @@ public partial class ColituMainWindow : Window
             RenderServers();
             ApplyStatus();
             _ = MeasurePingsAsync();
+            _ = RefreshNoticesAsync();
             if (_page == "account")
             {
                 await LoadDevicesAsync();
@@ -244,6 +246,7 @@ public partial class ColituMainWindow : Window
         }
         await _vpn.ForgetAccountAsync();
         StopSupportPolling();
+        ClearNotices();
         ShowAuth();
         ShowAuthError(Loc.I["auth.expired"]);
         ShowFromTray();
@@ -381,6 +384,11 @@ public partial class ColituMainWindow : Window
         RenderSupportList();
         UpdateTrayMenu();
         _ = LoadDevicesAsync();
+        if (AppView.IsVisible)
+        {
+            // The panel writes the notices in the app's language.
+            _ = RefreshNoticesAsync();
+        }
         Dispatcher.UIThread.Post(MoveNavThumb, DispatcherPriority.Loaded);
     }
 
