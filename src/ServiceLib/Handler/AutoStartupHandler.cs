@@ -142,6 +142,27 @@ public static class AutoStartupHandler
         await Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Quotes a program path for a desktop entry's Exec= key (Desktop Entry Specification):
+    /// a portable copy in a folder with spaces would otherwise not start at login.
+    /// </summary>
+    public static string DesktopExecQuote(string path)
+    {
+        var escaped = new StringBuilder(path.Length + 2).Append('"');
+        foreach (var c in path)
+        {
+            // A backslash is escaped twice: the string-level rule runs before the quoting rule.
+            escaped.Append(c switch
+            {
+                '\\' => @"\\\\",
+                '"' or '`' or '$' => "\\" + c,
+                '%' => "%%",
+                _ => c.ToString()
+            });
+        }
+        return escaped.Append('"').ToString();
+    }
+
     [SupportedOSPlatform("linux")]
     private static async Task SetTaskLinux()
     {
@@ -150,7 +171,7 @@ public static class AutoStartupHandler
             var linuxConfig = EmbedUtils.GetEmbedText(Global.LinuxAutostartConfig);
             if (linuxConfig.IsNotEmpty())
             {
-                linuxConfig = linuxConfig.Replace("$ExecPath$", Utils.GetExePath());
+                linuxConfig = linuxConfig.Replace("$ExecPath$", DesktopExecQuote(Utils.GetExePath()));
                 Logging.SaveLog(linuxConfig);
 
                 var homePath = GetHomePathLinux();

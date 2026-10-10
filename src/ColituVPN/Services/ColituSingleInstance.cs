@@ -26,7 +26,14 @@ public sealed class ColituSingleInstance : IDisposable
         var runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
         if (string.IsNullOrWhiteSpace(runtime) || !Directory.Exists(runtime))
         {
-            runtime = Path.GetTempPath();
+            // Not /tmp: another local user could take the predictable name there first, and this
+            // app would then "find itself running" and quit at every start. The data folder is
+            // the user's own (the same one in every run, before LocalAppData is decided).
+            runtime = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "ColituVPN");
+            if (!OperatingSystem.IsWindows())
+            {
+                Directory.CreateDirectory(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
         return Path.Combine(runtime, $"colitu-vpn-{Environment.UserName}.sock");
     }
