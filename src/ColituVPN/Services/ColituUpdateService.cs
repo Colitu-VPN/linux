@@ -30,7 +30,13 @@ public sealed class ColituUpdateService
     public const string PackageInstallDir = "/opt/colitu-vpn";
     private const string PackageName = "colitu-vpn";
 
-    public const string DownloadPageUrl = $"{ColituAuthService.WebBaseUrl}/downloads/linux";
+    /// <summary>
+    /// The download page people read (the same link as the README and the release notes). Not
+    /// <c>/downloads/linux</c>: that is the folder holding the packages and latest.json, and the web
+    /// server answers it without a trailing slash with a redirect to its internal port 7443,
+    /// which no browser can reach.
+    /// </summary>
+    public const string DownloadPageUrl = $"{ColituAuthService.WebBaseUrl}/download/linux";
 
     private static string ManifestUrl =>
 #if DEBUG
