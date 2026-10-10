@@ -90,4 +90,15 @@ public class ColituRuDirectTests
         File.Exists(Path.Combine(dir, "geosite-category-ru.srs")).Should().BeTrue();
         File.Exists(Path.Combine(dir, "geoip-ru.srs")).Should().BeTrue();
     }
+
+    [Fact]
+    public void LocalNetwork_GoesDirectAfterDns()
+    {
+        var rules = ColituVpnService.BuildColituRoutingRules(new ColituVpnPreferences(PrivacyModeEnabled: true), "DE");
+        var lan = rules.Single(r => r.Id == ColituVpnService.LanDirectRuleId);
+        lan.Enabled.Should().BeTrue();
+        lan.OutboundTag.Should().Be(Global.DirectTag);
+        lan.Ip.Should().Equal("geoip:private");
+        rules.FindIndex(r => r.Id == "colitu-dns-protection").Should().BeLessThan(rules.IndexOf(lan));
+    }
 }

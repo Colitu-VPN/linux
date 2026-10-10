@@ -21,6 +21,7 @@ public sealed class ColituVpnService
 
     private const string ColituSubId = "colitu-api";
     private const string ColituRoutingRemarks = "Colitu VPN Protection";
+    internal const string LanDirectRuleId = "colitu-lan-direct";
     private readonly ColituApiClient _api = ColituApiClient.Instance;
     private readonly Config _config = AppManager.Instance.Config;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -2493,6 +2494,18 @@ public sealed class ColituVpnService
             OutboundTag = Global.BlockTag,
             Ip = ["0.0.0.0/32", "::/128"],
             Enabled = (preferences.AdBlockEnabled && AdBlockAvailable)
+        });
+
+        // The local network (printers, NAS, another PC, the router page) never goes to the server,
+        // which cannot reach it: in TUN mode the adapter took it and the connection hung. After the
+        // DNS rule, so a resolver on the LAN still gets no names. The kill switch always lets it out.
+        rules.Add(new RulesItem
+        {
+            Id = LanDirectRuleId,
+            Remarks = "Local network direct",
+            OutboundTag = Global.DirectTag,
+            Ip = ["geoip:private"],
+            Enabled = true
         });
 
         // Russian sites and apps (banks, Gosuslugi, Wildberries, ...) refuse connections from a
