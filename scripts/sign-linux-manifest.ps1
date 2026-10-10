@@ -38,6 +38,10 @@ $rpmSha = (Get-FileHash -LiteralPath $RpmPath -Algorithm SHA256).Hash.ToLowerInv
 $parts = $Version.Split('.') | ForEach-Object { [int]$_ }
 $versionCode = ($parts[0] * 100) + ($parts[1] * 10) + $parts[2]
 $force = [bool]$ForceUpdate
+# Freshness window (signed): the app rejects a manifest issued more than 30 days ago or already expired.
+$issuedAt = [DateTime]::UtcNow
+$issuedAtText = $issuedAt.ToString("yyyy-MM-ddTHH:mm:ssZ", [System.Globalization.CultureInfo]::InvariantCulture)
+$expiresAtText = $issuedAt.AddDays(30).ToString("yyyy-MM-ddTHH:mm:ssZ", [System.Globalization.CultureInfo]::InvariantCulture)
 
 # Same text as ColituUpdateSignature.Message in the Linux app; any change there must be mirrored here.
 $signedText = @(
@@ -50,11 +54,15 @@ $signedText = @(
     $rpmSha,
     $(if ($force) { "true" } else { "false" })
 ) -join "`n"
+# signature_v2: the v1 text above (unchanged, so clients up to 1.4.3 keep verifying "signature")
+# plus the freshness window. The current client checks only signature_v2.
+$signedTextV2 = @($signedText, $issuedAtText, $expiresAtText) -join "`n"
 
 $key = [System.Security.Cryptography.ECDsa]::Create()
 try {
     $key.ImportFromPem((Get-Content -LiteralPath $SigningKeyPath -Raw))
     $signature = [Convert]::ToBase64String($key.SignData([System.Text.Encoding]::UTF8.GetBytes($signedText), [System.Security.Cryptography.HashAlgorithmName]::SHA256))
+    $signatureV2 = [Convert]::ToBase64String($key.SignData([System.Text.Encoding]::UTF8.GetBytes($signedTextV2), [System.Security.Cryptography.HashAlgorithmName]::SHA256))
 }
 finally {
     $key.Dispose()
@@ -67,7 +75,10 @@ $manifest = [ordered]@{
     releaseNotes = $ReleaseNotes
     deb = [ordered]@{ url = $debUrl; sha256 = $debSha }
     rpm = [ordered]@{ url = $rpmUrl; sha256 = $rpmSha }
+    issued_at = $issuedAtText
+    expires_at = $expiresAtText
     signature = $signature
+    signature_v2 = $signatureV2
 }
 $manifestPath = Join-Path $OutputDir "latest.json"
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path $manifestPath -Encoding utf8NoBOM

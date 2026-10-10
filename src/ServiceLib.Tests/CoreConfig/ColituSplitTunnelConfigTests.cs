@@ -113,6 +113,30 @@ public class ColituSplitTunnelConfigTests
     }
 
     [Test]
+    public async Task SingBox_Tun_Include_SelectedAppsResolveThroughTheTunnel()
+    {
+        var cfg = SingBox(Global.ProxyTag, tun: true, include: true);
+
+        var remote = cfg.dns.servers.Single(s => s.tag == Global.SingboxRemoteDNSTag);
+        await remote.detour.Should().BeEqualTo(Global.ProxyTag);
+        var byName = cfg.dns.rules.FindIndex(r => r.process_name != null && r.process_name.Contains(Utils.GetExeName("firefox")) && r.server == Global.SingboxRemoteDNSTag);
+        var byPath = cfg.dns.rules.FindIndex(r => r.process_path != null && r.process_path.Contains("/opt/telegram/Telegram".Replace('/', Path.DirectorySeparatorChar)) && r.server == Global.SingboxRemoteDNSTag);
+        await byName.Should().BeGreaterThanOrEqualTo(0);
+        await byPath.Should().BeGreaterThanOrEqualTo(0);
+        // No rule that answers from a direct resolver sits in front of them (the clash-mode switch and the
+        // protected server names are not about these programs).
+        await cfg.dns.rules.Take(Math.Min(byName, byPath)).Any(r => r.server?.StartsWith(Global.SingboxDirectDNSTagPrefix) == true && r.clash_mode == null && r.domain == null).Should().BeFalse();
+    }
+
+    [Test]
+    public async Task SingBox_Tun_Exclude_AddsNoRemoteDnsRulesForTheApps()
+    {
+        var cfg = SingBox(Global.DirectTag, tun: true, include: false);
+
+        await cfg.dns.rules.Any(r => (r.process_path != null || r.process_name != null) && r.server == Global.SingboxRemoteDNSTag).Should().BeFalse();
+    }
+
+    [Test]
     public async Task Xray_Proxy_Exclude_SendsSitesAndAddressesDirect()
     {
         var rules = Xray(Global.DirectTag, tun: false, include: false).routing.rules;

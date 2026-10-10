@@ -77,6 +77,8 @@ public class ColituSecurityTests
         }
         var payload = JsonSerializer.Deserialize<ColituLinuxVersionPayload>(File.ReadAllText(path), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
         ColituUpdateSignature.Verify(payload).Should().BeTrue();
+        ColituUpdateSignature.VerifyV2(payload).Should().BeTrue();
+        ColituUpdateSignature.IsFresh(payload, DateTimeOffset.UtcNow, out _).Should().BeTrue();
     }
 
     [Theory]

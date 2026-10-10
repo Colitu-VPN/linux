@@ -372,14 +372,14 @@ public sealed class ColituAuthService
         };
     }
 
-    private static HttpClient CreateHttpClient() => new(new SocketsHttpHandler
+    private static HttpClient CreateHttpClient() => new(ColituCertPins.Pin(new SocketsHttpHandler
     {
         UseProxy = false,
         ConnectTimeout = TimeSpan.FromSeconds(8),
         PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
         // The kill switch drops DNS to public upstream resolvers: dial the API's pinned addresses.
         ConnectCallback = ColituPinnedHosts.ConnectAsync
-    })
+    }))
     { Timeout = TimeSpan.FromSeconds(20) };
 
     /// <summary>
@@ -978,6 +978,8 @@ public sealed class ColituAuthService
         CurrentUser = null;
         CurrentSubscription = null;
         SetDevicePause(null);
+        // The recovery set carries this account's server credentials.
+        ColituVpnService.DeleteRecoverySet();
         try
         {
             if (File.Exists(SessionPath())) File.Delete(SessionPath());

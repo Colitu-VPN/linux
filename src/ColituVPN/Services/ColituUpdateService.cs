@@ -41,9 +41,9 @@ public sealed class ColituUpdateService
     private static readonly string LocalVersionName = ColituAuthService.ClientVersion;
     private static readonly TimeSpan AttemptCooldown = TimeSpan.FromMinutes(30);
 
-    private readonly HttpClient _httpClient = new(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly HttpClient _httpClient = new(ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false })) { Timeout = TimeSpan.FromSeconds(30) };
     // HttpClient.Timeout also cancels content streaming, so packages get their own client with a generous limit.
-    private readonly HttpClient _downloadClient = new(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromMinutes(30) };
+    private readonly HttpClient _downloadClient = new(ColituCertPins.Pin(new SocketsHttpHandler { UseProxy = false })) { Timeout = TimeSpan.FromMinutes(30) };
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public event Action<ColituUpdateInfo>? UpdateAvailable;
@@ -111,9 +111,14 @@ public sealed class ColituUpdateService
             if (!response.IsSuccessStatusCode) return null;
             var payload = await response.Content.ReadFromJsonAsync<ColituLinuxVersionPayload>(_jsonOptions);
             if (payload == null) return null;
-            if (!ColituUpdateSignature.Verify(payload))
+            if (!ColituUpdateSignature.VerifyV2(payload))
             {
-                Logging.SaveLog("ColituUpdateService: release manifest signature is missing or invalid; update ignored");
+                Logging.SaveLog("ColituUpdateService: release manifest signature_v2 is missing or invalid; update ignored");
+                return null;
+            }
+            if (!ColituUpdateSignature.IsFresh(payload, DateTimeOffset.UtcNow, out var staleReason))
+            {
+                Logging.SaveLog($"ColituUpdateService: release manifest rejected ({staleReason}); no update offered");
                 return null;
             }
 
@@ -440,8 +445,17 @@ internal sealed class ColituLinuxVersionPayload
     public string? ReleaseNotes { get; set; }
     public ColituLinuxPackage? Deb { get; set; }
     public ColituLinuxPackage? Rpm { get; set; }
+    /// <summary>ISO-8601 UTC time the manifest was signed (part of the signature_v2 text).</summary>
+    [JsonPropertyName("issued_at")]
+    public string? IssuedAt { get; set; }
+    /// <summary>ISO-8601 UTC time after which the manifest is void (part of the signature_v2 text).</summary>
+    [JsonPropertyName("expires_at")]
+    public string? ExpiresAt { get; set; }
     /// <summary>Base64 ECDSA P-256 signature over <see cref="ColituUpdateSignature.Message"/>.</summary>
     public string? Signature { get; set; }
+    /// <summary>Base64 ECDSA P-256 signature over <see cref="ColituUpdateSignature.MessageV2"/> (v1 text + issued_at + expires_at).</summary>
+    [JsonPropertyName("signature_v2")]
+    public string? SignatureV2 { get; set; }
 }
 
 internal sealed class ColituLinuxPackage
@@ -477,9 +491,62 @@ internal static class ColituUpdateSignature
         (payload.Rpm?.Sha256 ?? "").Trim().ToLowerInvariant(),
         payload.ForceUpdate ? "true" : "false");
 
-    internal static bool Verify(ColituLinuxVersionPayload payload, string publicKeyPem = PublicKeyPem)
+    /// <summary>
+    /// The text <c>signature_v2</c> signs: the unchanged v1 text plus issued_at and expires_at. The v1
+    /// text and <c>signature</c> stay exactly as they were, so clients up to 1.4.3 keep verifying the manifest.
+    /// </summary>
+    internal static string MessageV2(ColituLinuxVersionPayload payload) => string.Join("\n",
+        Message(payload),
+        payload.IssuedAt ?? "",
+        payload.ExpiresAt ?? "");
+
+    /// <summary>A manifest older than this is not offered, so a replayed old one can't hold back a newer release.</summary>
+    internal static readonly TimeSpan MaxManifestAge = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// Freshness of an already verified manifest: it must carry issued_at and expires_at, must not
+    /// be issued more than <see cref="MaxManifestAge"/> ago and must not be expired.
+    /// </summary>
+    internal static bool IsFresh(ColituLinuxVersionPayload payload, DateTimeOffset now, out string reason)
     {
-        if (string.IsNullOrWhiteSpace(payload.Signature))
+        if (!TryParseUtc(payload.IssuedAt, out var issuedAt) || !TryParseUtc(payload.ExpiresAt, out var expiresAt))
+        {
+            reason = "issued_at/expires_at missing or invalid";
+            return false;
+        }
+        if (now - issuedAt > MaxManifestAge)
+        {
+            reason = "issued_at is more than 30 days old";
+            return false;
+        }
+        if (now >= expiresAt)
+        {
+            reason = "expires_at has passed";
+            return false;
+        }
+        reason = "";
+        return true;
+    }
+
+    private static bool TryParseUtc(string? value, out DateTimeOffset result)
+    {
+        result = default;
+        return !string.IsNullOrWhiteSpace(value)
+            && DateTimeOffset.TryParse(value.Trim(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out result);
+    }
+
+    /// <summary>The v1 signature (what clients up to 1.4.3 check). The current client uses <see cref="VerifyV2"/> only.</summary>
+    internal static bool Verify(ColituLinuxVersionPayload payload, string publicKeyPem = PublicKeyPem) =>
+        VerifyText(Message(payload), payload.Signature, publicKeyPem);
+
+    /// <summary>The v2 signature over the v1 text plus issued_at/expires_at; a manifest without it is rejected.</summary>
+    internal static bool VerifyV2(ColituLinuxVersionPayload payload, string publicKeyPem = PublicKeyPem) =>
+        VerifyText(MessageV2(payload), payload.SignatureV2, publicKeyPem);
+
+    private static bool VerifyText(string message, string? signature, string publicKeyPem)
+    {
+        if (string.IsNullOrWhiteSpace(signature))
         {
             return false;
         }
@@ -487,7 +554,7 @@ internal static class ColituUpdateSignature
         {
             using var key = ECDsa.Create();
             key.ImportFromPem(publicKeyPem);
-            return key.VerifyData(Encoding.UTF8.GetBytes(Message(payload)), Convert.FromBase64String(payload.Signature.Trim()), HashAlgorithmName.SHA256);
+            return key.VerifyData(Encoding.UTF8.GetBytes(message), Convert.FromBase64String(signature.Trim()), HashAlgorithmName.SHA256);
         }
         catch
         {

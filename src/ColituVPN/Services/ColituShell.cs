@@ -53,7 +53,9 @@ public static class ColituShell
             Logging.SaveLog($"ColituShell.OpenUrl: refused link with an unsupported scheme or form ({Truncate(url)})");
             return false;
         }
-        return XdgOpen(new Uri(url!.Trim()).AbsoluteUri);
+        // Commas in a server-provided link are percent-encoded (same meaning to a web server) so
+        // no handler that splits its command line at commas can read part of it as a switch.
+        return XdgOpen(new Uri(url!.Trim()).AbsoluteUri.Replace(",", "%2C", StringComparison.Ordinal));
     }
 
     /// <summary>Shows one of the app's own folders (logs, downloaded attachments).</summary>

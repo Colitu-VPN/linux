@@ -74,13 +74,17 @@ public sealed class ColituVpnService
     private long _lastSpareProbeAt;
     /// <summary>A replacement for a dead spare, waiting for a quiet moment to reload the core.</summary>
     private ColituSparePlan? _pendingSpare;
-    private long _spareSwapDeferredLogAt;
+    /// <summary>When the pending spare swap was first held back (0: not held back); reset by a swap or a new spare target.</summary>
+    private long _spareSwapDeferredSince;
+    private string? _spareSwapDeferKey;
     /// <summary>Bytes on the physical adapter, sampled every watchdog second (for "the tunnel is quiet").</summary>
     private readonly Queue<(long Tick, long Bytes)> _trafficSamples = new();
     /// <summary>The primary server's transports of the current connect (the same-server spare picks from them).</summary>
     private List<(ColituConfigCandidate Candidate, ProfileItem Profile)> _currentProfiles = [];
     /// <summary>Transports that failed during the current connect (they go last when marks are ignored).</summary>
     private readonly HashSet<string> _failedThisConnect = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The last settings fetch of this connect failed on every API base at the network level (the cached settings, if any, were used).</summary>
+    private volatile bool _apiUnreachable;
     /// <summary>The stall marks covered (almost) every transport in this round and are ignored.</summary>
     private bool _marksIgnored;
 
@@ -230,7 +234,7 @@ public sealed class ColituVpnService
     private void RememberClientNetwork(ColituServersResponse servers)
     {
         var country = servers.ClientCountry.NullIfEmpty() ?? _session.ClientCountry;
-        var network = servers.ClientNetwork.NullIfEmpty() ?? _session.ClientNetwork;
+        var network = ColituAdaptiveConnect.ResolveClientNetwork(servers.ClientNetwork, _session.ClientNetwork);
         var session = _session with { ClientCountry = country, ClientNetwork = network };
         if (servers.ClientNetwork.IsNotEmpty())
         {
@@ -238,6 +242,7 @@ public sealed class ColituVpnService
             session = session with
             {
                 NetworkHintsBlocked = servers.NetworkHintsBlocked,
+                NetworkHintsPreferred = servers.NetworkHintsPreferred,
                 NetworkHintsNetwork = servers.ClientNetwork
             };
             if (servers.NetworkToken.IsNotEmpty())
@@ -270,6 +275,10 @@ public sealed class ColituVpnService
     private bool HintedBlocked(string protocol) =>
         ColituAdaptiveConnect.HintSaysBlocked(HintedBlockedList(), protocol, _adaptive, _networkKey, DateTimeOffset.UtcNow);
 
+    /// <summary>Protocols the panel's hints call preferred on the current network (same network binding as the blocked ones).</summary>
+    private IReadOnlyList<string> HintedPreferredList() =>
+        string.Equals(_session.NetworkHintsNetwork, _session.ClientNetwork, StringComparison.Ordinal) ? _session.NetworkHintsPreferred ?? [] : [];
+
     public async Task<ColituServersResponse> GetServersAsync()
     {
         try
@@ -279,6 +288,8 @@ public sealed class ColituVpnService
             // Routes are looked up by id like nodes: a saved choice may be one of them.
             _lastServers = servers.Servers.Concat(servers.Multihop).ToList();
             _multihopRoutes = servers.Multihop;
+            // Never blocks the caller: the recovery set follows the server list (VPN on or off).
+            _ = RefreshRecoverySetIfDueAsync();
             if (!IsAutoSelection && SelectedServer == null && _session.SelectedServerId.IsNotEmpty())
             {
                 SelectedServer = _lastServers.FirstOrDefault(s => string.Equals(s.Id, _session.SelectedServerId, StringComparison.OrdinalIgnoreCase));
@@ -408,7 +419,9 @@ public sealed class ColituVpnService
         _sparePlan = null;
         _spareServer = null;
         _pendingSpare = null;
+        ResetSpareSwapDeferral();
         _failedThisConnect.Clear();
+        _apiUnreachable = false;
         OfferFastestServer = false;
         SetStatus(ColituVpnStatus.Connecting);
         LastError = null;
@@ -445,10 +458,24 @@ public sealed class ColituVpnService
             ColituVpnServer? connected = null;
             // Parallel connect: only the spare on the next server carried traffic, so it leads the next round.
             ColituSpareServerWins? swap = null;
+            // Adaptive Connect 3.0: once set, the recovery set's servers replace the panel (API
+            // unreachable, no usable cache); the last server failure is what the connect ends with.
+            ColituRecoverySet? recovery = null;
+            Exception? lastServerFailure = null;
             for (var round = 1; ; round++)
             {
+                var wasSwap = swap != null;
+                var viaRecovery = recovery != null && !wasSwap;
+                var recoveryEnvelope = viaRecovery ? recovery!.NextServer(failed) : null;
+                if (viaRecovery && recoveryEnvelope == null)
+                {
+                    LogConnection($"Recovery set: all {recovery!.Configs.Count} server(s) tried, giving up");
+                    throw lastServerFailure ?? new ColituConnectException(Loc.I["err.noServers"]);
+                }
                 var target = swap != null
                     ? FindServer(swap.Spare.ServerId) ?? swap.Spare.Config.Server ?? new ColituVpnServer { Id = swap.Spare.ServerId }
+                    : viaRecovery
+                    ? null
                     : automatic
                     ? ranked.FirstOrDefault(item => !failed.Contains(item.Id!, StringComparer.OrdinalIgnoreCase))
                     : server;
@@ -456,12 +483,39 @@ public sealed class ColituVpnService
                 {
                     ConnectStage = "connect.tryingOther";
                     StatusChanged?.Invoke(Status);
-                    LogConnection($"Trying another server ({(target == null ? "the panel chooses" : $"id={target.Id}")}, {connectWatch.ElapsedMilliseconds} ms into the connect)");
+                    LogConnection($"Trying another server ({(viaRecovery ? $"recovery set, id={recoveryEnvelope!.Server?.Id}" : target == null ? "the panel chooses" : $"id={target.Id}")}, {connectWatch.ElapsedMilliseconds} ms into the connect)");
                 }
-                var configTask = swap != null ? Task.FromResult(swap.Spare.Config) : FetchConfigAsync(target, token, keepPreference || round > 1, automatic, failed);
+                var configTask = swap != null ? Task.FromResult(swap.Spare.Config)
+                    : viaRecovery ? FetchRecoveryConfigAsync(recoveryEnvelope!, token)
+                    : FetchConfigAsync(target, token, keepPreference || round > 1, automatic, failed);
                 // Started after the primary's request reset the panel connections; never awaited.
-                var spareTask = StartSpareFetch(automatic, ranked, target, failed, token);
-                var config = await configTask;
+                var spareTask = viaRecovery ? StartRecoverySpare(recovery!, recoveryEnvelope!, failed, token) : StartSpareFetch(automatic, ranked, target, failed, token);
+                ColituVpnConfigResponse config;
+                try
+                {
+                    config = await configTask;
+                }
+                catch (Exception ex) when (viaRecovery && !token.IsCancellationRequested)
+                {
+                    // Its settings could not be turned into a connection (e.g. a rotating exit needs VLESS).
+                    var skipped = recoveryEnvelope!.Server?.Id;
+                    LogConnection($"Recovery server {skipped} unusable ({ex.GetType().Name}: {ex.Message}); trying the next one");
+                    failed.Add(skipped!);
+                    lastServerFailure = ex;
+                    continue;
+                }
+                catch (Exception ex) when (!viaRecovery && !wasSwap && !token.IsCancellationRequested
+                    && ColituAdaptiveConnect3.ShouldUseRecovery(automatic, _apiUnreachable && ColituRecoverySet.IsApiUnreachable(ex), cacheUsable: false))
+                {
+                    // Every API base failed at the network level and nothing cached is left to try.
+                    recovery = BeginRecovery();
+                    if (recovery == null)
+                    {
+                        throw;
+                    }
+                    lastServerFailure = ex;
+                    continue;
+                }
                 var forcedFirst = swap?.Protocol;
                 swap = null;
                 token.ThrowIfCancellationRequested();
@@ -528,8 +582,24 @@ public sealed class ColituVpnService
                         failed.Add(targetId);
                     }
                     SaveState();
+                    lastServerFailure = ex;
+                    if (recovery != null)
+                    {
+                        // The set has at most four servers; the loop ends when none is left.
+                        LogConnection($"Server {connectedId} carried no traffic on this network ({ex.Message}); penalized for 30 minutes, trying the next recovery server");
+                        await StopCoreAsync();
+                        continue;
+                    }
                     if (round >= ColituAdaptiveConnect.MaxServersPerConnect || connectWatch.Elapsed > NextServerDeadline)
                     {
+                        // The settings that failed came from the cache because the panel was unreachable:
+                        // the cache is spent, so the recovery set is the last resort.
+                        if (ColituAdaptiveConnect3.ShouldUseRecovery(automatic, _apiUnreachable, cacheUsable: false) && BeginRecovery() is { } begun)
+                        {
+                            recovery = begun;
+                            await StopCoreAsync();
+                            continue;
+                        }
                         LogConnection($"Server {connectedId} carried no traffic ({ex.Message}); {round} server(s) tried in {connectWatch.ElapsedMilliseconds} ms, giving up");
                         throw;
                     }
@@ -541,6 +611,11 @@ public sealed class ColituVpnService
             ConnectedServer = connected;
             ConnectedAt = DateTimeOffset.Now;
             ConnectStage = null;
+            if (recovery != null)
+            {
+                LogConnection($"Connected through the recovery set (server {connected?.Id}); the server list, settings and recovery set are refreshed through the tunnel");
+                _ = RefreshAfterRecoveryAsync();
+            }
             if (connected is { IsMultihop: false, Id.Length: > 0 })
             {
                 var now = DateTimeOffset.UtcNow;
@@ -853,6 +928,194 @@ public sealed class ColituVpnService
         }
     }
 
+    // ── Recovery set (Adaptive Connect 3.0) ────────────────────────────────
+    // GET /client/recovery: up to four config envelopes, fetched in the background next to the
+    // server list and stored (encrypted, they carry the device's server credentials) next to the
+    // config cache. Used only by an automatic connect that cannot reach the panel on any API base
+    // and has no usable cached settings. The nodes still check the device credential: it grants
+    // nothing new.
+    private int _recoveryRefreshing;
+
+    private static string RecoverySetPath() => ColituHardening.UserConfigPath("colitu-recovery.bin");
+
+    /// <summary>The stored set (also an expired one, so that the caller deletes it); null when none or unreadable.</summary>
+    private static ColituRecoverySet? LoadRecoverySet()
+    {
+        try
+        {
+            if (!File.Exists(RecoverySetPath())) return null;
+            return ColituRecoverySet.Parse(System.Text.Encoding.UTF8.GetString(ColituHardening.UnprotectBytes(File.ReadAllBytes(RecoverySetPath()))));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void SaveRecoveryJson(string json)
+    {
+        try
+        {
+            ColituHardening.WritePrivateFile(RecoverySetPath(), ColituHardening.ProtectBytes(System.Text.Encoding.UTF8.GetBytes(json)));
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituVpnService.SaveRecoveryJson", ex);
+        }
+    }
+
+    /// <summary>Sign-out, account deletion, 401/403 on a fetch, or a set past its <c>recovery_until</c>.</summary>
+    internal static void DeleteRecoverySet()
+    {
+        try
+        {
+            if (File.Exists(RecoverySetPath())) File.Delete(RecoverySetPath());
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+
+    /// <summary>
+    /// Fetches the set when none is stored or it is 24 h old (at most one attempt per 6 h). Never
+    /// blocks start-up or a connect; works with the VPN on or off. 401/403 delete the stored set,
+    /// network errors and 5xx keep it.
+    /// </summary>
+    private async Task RefreshRecoverySetIfDueAsync()
+    {
+        if (!ColituAdaptiveConnect3.RecoveryFetchAllowed() || Interlocked.Exchange(ref _recoveryRefreshing, 1) == 1)
+        {
+            return;
+        }
+        try
+        {
+            if (!ColituAuthService.Instance.HasSession)
+            {
+                return;
+            }
+            var user = ColituAuthService.Instance.CurrentUser?.Id ?? "-";
+            var now = DateTimeOffset.UtcNow;
+            var lastAttempt = string.Equals(_session.RecoveryAttemptUser, user, StringComparison.Ordinal) ? _session.RecoveryAttemptAt : null;
+            if (!ColituRecoverySet.RefreshDue(LoadRecoverySet()?.GeneratedAt, lastAttempt, now))
+            {
+                return;
+            }
+            _session = _session with { RecoveryAttemptAt = now, RecoveryAttemptUser = user };
+            SaveState();
+            try
+            {
+                var json = await _api.GetRecoveryJsonAsync(_session.ClientCountry);
+                if (ColituRecoverySet.Parse(json) is { } fresh)
+                {
+                    SaveRecoveryJson(json);
+                    LogConnection($"Recovery set stored: {fresh.Configs.Count} server(s), until {fresh.RecoveryUntil:O}");
+                }
+                else
+                {
+                    LogConnection("Recovery set answer not usable; the stored one is kept");
+                }
+            }
+            catch (ColituApiException ex) when (ColituRecoverySet.DeletesSetOnFetchFailure(ex.StatusCode, ex.ErrorCode))
+            {
+                DeleteRecoverySet();
+                LogConnection($"Recovery set refused ({(int)ex.StatusCode}); the stored one is deleted");
+            }
+            catch (Exception ex)
+            {
+                LogConnection($"Recovery set not fetched ({ex.GetType().Name}); the stored one is kept");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logging.SaveLog("ColituVpnService.RefreshRecoverySetIfDueAsync", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _recoveryRefreshing, 0);
+        }
+    }
+
+    /// <summary>Connected through the recovery set: the panel is reachable through the tunnel now, refresh everything from it.</summary>
+    private async Task RefreshAfterRecoveryAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        await RefreshServerListQuietlyAsync();
+    }
+
+    /// <summary>
+    /// The stored set for a connect that cannot use the panel or the cache: null (give up as before)
+    /// when there is none, or it is past <c>recovery_until</c> (then it is deleted).
+    /// </summary>
+    private ColituRecoverySet? BeginRecovery()
+    {
+        if (!ColituAdaptiveConnect3.RecoveryFetchAllowed())
+        {
+            return null;
+        }
+        var set = LoadRecoverySet();
+        if (set == null)
+        {
+            LogConnection("API unreachable and no usable cache; no recovery set stored");
+            return null;
+        }
+        if (set.IsExpired(DateTimeOffset.UtcNow))
+        {
+            DeleteRecoverySet();
+            LogConnection($"API unreachable and no usable cache; the recovery set is past {set.RecoveryUntil:O} and was deleted");
+            return null;
+        }
+        LogConnection($"API unreachable and no usable cache: recovery set, {set.Configs.Count} servers (until {set.RecoveryUntil:O})");
+        return set;
+    }
+
+    /// <summary>One envelope of the set as connection settings (pinned addresses, its own offline grace ignored).</summary>
+    private async Task<ColituVpnConfigResponse> FetchRecoveryConfigAsync(ColituConfigEnvelopeDto envelope, CancellationToken token)
+    {
+        var config = await _api.GetRecoveryConfigAsync(envelope, token) ?? throw new ColituConnectException(Loc.I["err.noServers"]);
+        foreach (var candidate in config.Candidates)
+        {
+            // The kill switch lets the known server addresses through, exactly as for a cached config's server.
+            if (FmtHandler.ResolveConfig(candidate.ShareLink, out _) is { } item && IPAddress.TryParse(item.Address, out var address))
+            {
+                ColituNetwork.RememberServerAddress(address);
+            }
+        }
+        return RestrictToVlessIfNeeded(config, null);
+    }
+
+    /// <summary>The warm spare behind a recovery server: the next server of the set that did not fail and is not penalized here.</summary>
+    private ColituSpareFetch? StartRecoverySpare(ColituRecoverySet recovery, ColituConfigEnvelopeDto current, IReadOnlyCollection<string> failed, CancellationToken token)
+    {
+        if (!Preferences.WarmSpareEnabled)
+        {
+            return null;
+        }
+        var now = DateTimeOffset.UtcNow;
+        var skip = failed
+            .Append(current.Server?.Id ?? "")
+            .Concat(recovery.Configs.Select(item => item.Server?.Id ?? "").Where(id => _adaptive.IsPenalized(_networkKey, id, now)))
+            .ToList();
+        if (recovery.NextServer(skip) is not { Server.Id.Length: > 0 } next)
+        {
+            return null;
+        }
+        return new ColituSpareFetch(next.Server.Id, SpareFromRecoveryAsync(next, next.Server.Id, token));
+    }
+
+    private async Task<ColituSpareServer?> SpareFromRecoveryAsync(ColituConfigEnvelopeDto envelope, string serverId, CancellationToken token)
+    {
+        try
+        {
+            return ToSpareServer(await _api.GetRecoveryConfigAsync(envelope, token), serverId, cached: true);
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            LogConnection($"Warm spare settings for recovery server {serverId} not built ({ex.GetType().Name})");
+            return null;
+        }
+    }
+
     // ── Speed budget of an automatic connect ───────────────────────────────
     /// <summary>One transport: core start plus traffic check.</summary>
     internal static readonly TimeSpan TransportBudget = TimeSpan.FromSeconds(8);
@@ -919,6 +1182,7 @@ public sealed class ColituVpnService
                 ?? throw new ColituConnectException(Loc.I["err.noServers"]);
             LogConnection($"Panel answered in {watch.ElapsedMilliseconds} ms (preference {preferenceMs} ms, config {watch.ElapsedMilliseconds - preferenceMs} ms)");
             ColituAuthService.Instance.SetDevicePause(null);
+            _apiUnreachable = false;
             SaveCachedConfig(cacheKey, config);
             if (automatic && server != null)
             {
@@ -936,8 +1200,15 @@ public sealed class ColituVpnService
         }
         catch (Exception ex) when (!token.IsCancellationRequested && IsNetworkFailure(ex) && CachedFallback(cacheKey, automatic, exclude) is { } cached)
         {
+            _apiUnreachable = ColituRecoverySet.IsApiUnreachable(ex);
             LogConnection($"Panel unreachable after {watch.ElapsedMilliseconds} ms ({ex.GetType().Name}); using cached connection settings for {cached.ServerId ?? cacheKey}");
             return RestrictToVlessIfNeeded(cached, server);
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested && ColituRecoverySet.IsApiUnreachable(ex))
+        {
+            // Nothing cached to fall back on: the recovery set may take over (see ConnectCoreAsync).
+            _apiUnreachable = true;
+            throw;
         }
     }
 
@@ -1305,6 +1576,8 @@ public sealed class ColituVpnService
         {
             // Best effort.
         }
+        DeleteRecoverySet();
+        _session = _session with { RecoveryAttemptAt = null, RecoveryAttemptUser = null };
         try
         {
             // The imported profiles hold this account's server credentials in plain text
@@ -1420,9 +1693,11 @@ public sealed class ColituVpnService
         if (_activeTransport != null)
         {
             // The device is online (the watcher checked): 10 minutes, 6 h once another transport carries traffic here.
-            _adaptive.MarkStalled(_networkKey, ConnectedServer?.Id, _activeTransport, DateTimeOffset.UtcNow, provisional: true);
+            var shortMark = _adaptive.MarkMidSessionStall(_networkKey, ConnectedServer?.Id, _activeTransport, DateTimeOffset.UtcNow, provisional: true);
             SaveState();
-            LogConnection($"Transport {_activeTransport} stalled; it goes last on this server and network for 10 minutes (6 h once another transport carries traffic here)");
+            LogConnection(shortMark
+                ? $"Transport {_activeTransport} stalled; proven here: short penalty, it goes last on this server and network for 90 s"
+                : $"Transport {_activeTransport} stalled; it goes last on this server and network for 10 minutes (6 h once another transport carries traffic here)");
         }
         LogConnection($"Tunnel carries no traffic ({detail}); reconnecting");
         await OnTunnelLostAsync();
@@ -1557,8 +1832,8 @@ public sealed class ColituVpnService
         {
             return;
         }
-        LogConnection($"{serverId}/{_activeTransport} is dead, the warm spare {plan.ServerId}/{plan.Protocol} carries the traffic; it leads the next connect");
-        _adaptive.MarkStalled(_networkKey, serverId, _activeTransport, now, provisional: true);
+        var shortMark = _adaptive.MarkMidSessionStall(_networkKey, serverId, _activeTransport, now, provisional: true);
+        LogConnection($"{serverId}/{_activeTransport} is dead, the warm spare {plan.ServerId}/{plan.Protocol} carries the traffic; it leads the next connect{(shortMark ? " (proven here: short penalty)" : "")}");
         if (plan.ServerId is { Length: > 0 } spareServer)
         {
             _adaptive.RememberGoodServer(_networkKey, spareServer, now);
@@ -1605,6 +1880,7 @@ public sealed class ColituVpnService
             return;
         }
         _pendingSpare = replacement;
+        ResetSpareSwapDeferral();
         await TrySwapSpareAsync(now);
     }
 
@@ -1643,7 +1919,17 @@ public sealed class ColituVpnService
         return PlanSpare(primaryProtocol, primary, _currentProfiles, config, ConnectedServer, excluded);
     }
 
-    /// <summary>Swaps the pending spare in by reloading the core, only while the tunnel carried under 10 KB in the last 10 s.</summary>
+    private void ResetSpareSwapDeferral()
+    {
+        _spareSwapDeferredSince = 0;
+        _spareSwapDeferKey = null;
+    }
+
+    /// <summary>
+    /// Swaps the pending spare in by reloading the core: at once when the tunnel carried under 10 KB in
+    /// the last 10 s (or the traffic is unknown), after 2 minutes of deferral also under 32 KB
+    /// (<see cref="ColituSpareHealth.SwapDeferral"/>). The log says why only when the reason changes.
+    /// </summary>
     private async Task TrySwapSpareAsync(long now)
     {
         var next = _pendingSpare;
@@ -1652,15 +1938,26 @@ public sealed class ColituVpnService
             return;
         }
         var bytes = TrafficInWindow();
-        if (!ColituSpareHealth.CanSwap(bytes))
+        var deferredFor = _spareSwapDeferredSince == 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(now - _spareSwapDeferredSince);
+        var decision = ColituSpareHealth.SwapDeferral(bytes < 0 ? null : bytes, deferredFor);
+        if (!decision.Now)
         {
-            if (now - _spareSwapDeferredLogAt > 30_000)
+            if (_spareSwapDeferredSince == 0)
             {
-                _spareSwapDeferredLogAt = now;
-                LogConnection($"spare swap deferred: busy ({bytes / 1024} KB in the last 10 s)");
+                _spareSwapDeferredSince = now;
+            }
+            if (_spareSwapDeferKey != decision.Key)
+            {
+                _spareSwapDeferKey = decision.Key;
+                LogConnection($"spare swap deferred: {decision.Reason}");
             }
             return;
         }
+        if (decision.Key == "light")
+        {
+            LogConnection($"spare swap: {decision.Reason}");
+        }
+        ResetSpareSwapDeferral();
         var old = _sparePlan;
         _pendingSpare = null;
         if (next.NextServerId != null && _spareServer is { } spareServer)
@@ -1725,14 +2022,16 @@ public sealed class ColituVpnService
         if (Status != ColituVpnStatus.Connected || _autoReconnecting || _userDisconnected
             || !ShouldSwitchTransport(_lastTransportSwitch, DateTimeOffset.UtcNow))
         {
-            // Switched less than a minute ago: the next three failed checks decide again.
+            // Switched less than a minute ago: the verdict stays (one miss short), so the switch
+            // happens as soon as the gap ends instead of after three more misses.
+            _watch.Defer(ColituWatchAction.PrimaryDead);
             return;
         }
         _lastTransportSwitch = DateTimeOffset.UtcNow;
         var server = ConnectedServer;
-        _adaptive.MarkStalled(_networkKey, server?.Id, "hysteria2", DateTimeOffset.UtcNow);
+        var shortMark = _adaptive.MarkMidSessionStall(_networkKey, server?.Id, "hysteria2", DateTimeOffset.UtcNow, provisional: false);
         SaveState();
-        LogConnection($"Hysteria2 stalled mid-session ({HysteriaStallChecks} checks, last: {detail}); demoted on this server and network for 6 hours, switching to the next transport");
+        LogConnection($"Hysteria2 stalled mid-session ({HysteriaStallChecks} checks, last: {detail}); demoted on this server and network for {(shortMark ? "90 s (proven here: short penalty)" : "6 hours")}, switching to the next transport");
         await SwitchTransportAsync(server);
     }
 
@@ -2072,6 +2371,12 @@ public sealed class ColituVpnService
         // warnings and errors still show why the tunnel failed. No access log either.
         _config.CoreBasicItem.Loglevel = "warning";
         _config.CoreBasicItem.LogEnabled = false;
+        // The local proxy has no password: it stays on 127.0.0.1, whatever an old or edited
+        // settings file says (v2rayN's "allow LAN" would open it to everyone on the network).
+        foreach (var inbound in _config.Inbound ?? [])
+        {
+            inbound.AllowLANConn = false;
+        }
         // Hysteria2 is not an Xray protocol; it runs on the bundled sing-box core.
         _config.CoreTypeItem = [new CoreTypeItem { ConfigType = EConfigType.Hysteria2, CoreType = ECoreType.sing_box }];
         // Port hopping (mport on the panel's hysteria2:// links): a new UDP port every 30 s, so a
@@ -2086,6 +2391,14 @@ public sealed class ColituVpnService
     /// Imports every transport offered by the panel for the selected location
     /// (primary first) and returns the matching v2rayN profiles in that order.
     /// </summary>
+    private static readonly string[] ImportSchemes = ["vless://", "trojan://", "hysteria2://", "ss://"];
+
+    /// <summary>True when every non-empty line of the config is one of the share-link schemes the app builds.</summary>
+    internal static bool IsLinksOnly(string? rawConfig)
+        => !string.IsNullOrWhiteSpace(rawConfig)
+           && rawConfig.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0)
+               .All(line => ImportSchemes.Any(scheme => line.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)));
+
     private async Task<List<(ColituConfigCandidate Candidate, ProfileItem Profile)>> ImportConfigAsync(ColituVpnConfigResponse config, ColituVpnServer? server)
     {
         var candidates = config.Candidates;
@@ -2095,6 +2408,12 @@ public sealed class ColituVpnService
             throw new InvalidOperationException("Server config is not ready.");
         }
 
+        // RawConfig is built locally from share links. Anything else must never reach v2rayN's
+        // importer, whose fallbacks register unrecognised text as a full core config.
+        if (!IsLinksOnly(config.RawConfig))
+        {
+            throw new InvalidOperationException("Server config could not be imported.");
+        }
         var imported = await ConfigHandler.AddBatchServers(_config, config.RawConfig, ColituSubId, true);
         if (imported <= 0) throw new InvalidOperationException("Server config could not be imported.");
 
@@ -2125,12 +2444,25 @@ public sealed class ColituVpnService
             throw new InvalidOperationException("Imported server was not found in v2rayN profiles.");
         }
 
-        var latency = await MeasureTransportLatencyAsync(ordered);
         var serverId = config.ServerId ?? server?.Id;
         var lastGood = _adaptive.LastGoodTransport(_networkKey, serverId, DateTimeOffset.UtcNow);
         var offered = ordered.Select(item => item.Candidate.Protocol).ToList();
         bool Stalled(string protocol) => _adaptive.IsStalled(_networkKey, serverId, protocol, DateTimeOffset.UtcNow);
         _marksIgnored = ColituTransportOrder.MarksCoverAlmostAll(offered, Stalled);
+        // Adaptive Connect 3.0: no memory of this network (no last good transport for this server),
+        // so what worked for most devices here goes first, and the latency probe is skipped. Own
+        // experience (a last good transport) and a round with ignored marks keep the usual order.
+        if (ColituAdaptiveConnect3.HintedStartActive(_marksIgnored)
+            && ColituNetworkHintsPolicy.HintedStart(ordered, item => item.Candidate.Protocol, HintedPreferredList(),
+                protocol => Stalled(protocol) || HintedBlocked(protocol), lastGood,
+                rest => rest.OrderBy(item => TransportRank(item.Candidate.Protocol, 0, Stalled(item.Candidate.Protocol),
+                    hintedBlocked: HintedBlocked(item.Candidate.Protocol)))) is { } hinted)
+        {
+            LogConnection($"no memory of this network, starting with the hinted [{string.Join(", ", hinted.Select(item => item.Candidate.Protocol))}]");
+            LogConnection($"Transport order: {string.Join(" > ", hinted.Select(item => item.Candidate.Protocol))} (hinted, no probe)");
+            return hinted;
+        }
+        var latency = await MeasureTransportLatencyAsync(ordered);
         if (_marksIgnored)
         {
             var proven = _adaptive.ProvenOnNetwork(_networkKey, DateTimeOffset.UtcNow);
@@ -3188,6 +3520,8 @@ public sealed class ColituServersResponse
     public string? NetworkToken { get; set; }
     /// <summary>Protocols the network hints call blocked on that network (empty: none).</summary>
     public List<string> NetworkHintsBlocked { get; set; } = [];
+    /// <summary>Protocols that worked for most devices on that network, best first (Adaptive Connect 3.0).</summary>
+    public List<string> NetworkHintsPreferred { get; set; } = [];
     /// <summary>The panel refused the list because the account has no active plan.</summary>
     public bool PlanRequired { get; set; }
 }
@@ -3541,7 +3875,12 @@ public sealed record ColituVpnSession
     public DateTimeOffset? NetworkTokenAt { get; init; }
     /// <summary>Protocols blocked on <see cref="NetworkHintsNetwork"/> according to the panel.</summary>
     public List<string>? NetworkHintsBlocked { get; init; }
+    /// <summary>Protocols that worked for most devices on <see cref="NetworkHintsNetwork"/>, best first (stored with the blocked ones).</summary>
+    public List<string>? NetworkHintsPreferred { get; init; }
     public string? NetworkHintsNetwork { get; init; }
+    /// <summary>Recovery set: the last fetch attempt (at most one per 6 h) and the account it was made for.</summary>
+    public DateTimeOffset? RecoveryAttemptAt { get; init; }
+    public string? RecoveryAttemptUser { get; init; }
 }
 
 public static class ColituServerSelectionModes
