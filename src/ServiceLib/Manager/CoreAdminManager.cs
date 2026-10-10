@@ -31,6 +31,8 @@ public class CoreAdminManager
 
     public async Task<ProcessService?> RunProcessAsLinuxSudo(string fileName, CoreInfo coreInfo, string configPath)
     {
+        // Root runs the packaged core, never the per-user copy in the data folder.
+        fileName = RootCoreFile(fileName, Utils.GetBinPath(""), Utils.GetBaseDirectory("bin"), IsWritableByUser);
         StringBuilder sb = new();
         sb.AppendLine("#!/bin/bash");
         // Absolute sudo: never one found earlier in a user-writable PATH entry.
@@ -70,6 +72,53 @@ public class CoreAdminManager
 
         return procService;
     }
+
+    /// <summary>
+    /// The core binary root may run. A packaged install copies /opt/colitu-vpn/bin into the user's
+    /// data folder (LocalAppData); that copy is writable by everything running as the user, so
+    /// running it through sudo would turn any such process into root on the next TUN connect.
+    /// When the same file exists in the package folder and the user cannot modify it (nor any
+    /// folder above it), that one is used. Otherwise (a portable copy, where the whole app is the
+    /// user's own) the file is returned unchanged.
+    /// </summary>
+    public static string RootCoreFile(string fileName, string userBinDir, string packageBinDir, Func<string, bool> writableByUser)
+    {
+        var file = Path.GetFullPath(fileName);
+        var userBin = Path.TrimEndingDirectorySeparator(Path.GetFullPath(userBinDir));
+        var packageBin = Path.TrimEndingDirectorySeparator(Path.GetFullPath(packageBinDir));
+        if (userBin == packageBin || !file.StartsWith(userBin + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return fileName;
+        }
+        var trusted = Path.Combine(packageBin, Path.GetRelativePath(userBin, file));
+        if (!File.Exists(trusted))
+        {
+            return fileName;
+        }
+        for (var path = trusted; !string.IsNullOrEmpty(path); path = Path.GetDirectoryName(path))
+        {
+            if (writableByUser(path))
+            {
+                return fileName;
+            }
+        }
+        return trusted;
+    }
+
+    private static bool IsWritableByUser(string path)
+    {
+        try
+        {
+            return access(path, 2 /* W_OK */) == 0;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
+    private static extern int access(string path, int mode);
 
     private static string SudoPath() => File.Exists("/usr/bin/sudo") ? "/usr/bin/sudo" : File.Exists("/bin/sudo") ? "/bin/sudo" : "sudo";
 

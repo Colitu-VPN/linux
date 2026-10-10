@@ -140,7 +140,9 @@ public sealed class ColituKillSwitch
         rules.Append($"    ip daddr {{ {string.Join(", ", LocalNetworks4)} }} accept").Append('\n');
         rules.Append($"    ip6 daddr {{ {string.Join(", ", LocalNetworks6)} }} accept").Append('\n');
         rules.Append("    udp sport 68 udp dport 67 accept").Append('\n');
-        rules.Append("    udp dport 547 accept").Append('\n');
+        // DHCPv6 from the client port only: 546 is privileged, so no user process can use this
+        // rule to send UDP to any host on port 547 (the multicast server address is in LocalNetworks6).
+        rules.Append("    udp sport 546 udp dport 547 accept").Append('\n');
         if (v4.Count > 0)
         {
             rules.Append($"    ip daddr {{ {string.Join(", ", v4)} }} accept").Append('\n');
@@ -233,7 +235,9 @@ public sealed class ColituKillSwitch
     /// <summary>
     /// Root shell script that stops VPN cores of a crashed run that still run as root
     /// (TUN mode starts them through sudo; they outlive the app and keep the TUN routes).
-    /// Matches on the executable path, which must be under one of <paramref name="binPaths"/>.
+    /// Matches on the executable path, which must be under one of <paramref name="binPaths"/>, and
+    /// only on cores this user started through sudo (SUDO_UID in their environment): the headless
+    /// colitud and other users' sessions run the same /opt/colitu-vpn/bin cores and are left alone.
     /// </summary>
     internal static string BuildStopOrphanCoresScript(params string[] binPaths)
     {
@@ -241,13 +245,18 @@ public sealed class ColituKillSwitch
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => path.TrimEnd('/') + "/")
             .Distinct(StringComparer.Ordinal)
-            .Select(prefix => $"    {ShellQuote(prefix)}*) kill -9 \"${{p#/proc/}}\" 2>/dev/null || true ;;"));
-        return $"""
+            .Select(prefix => $"    {ShellQuote(prefix)}*) ;;"));
+        return $$"""
+            uid="${SUDO_UID:-}"
+            case "$uid" in ''|*[!0-9]*) exit 0 ;; esac
             for p in /proc/[0-9]*; do
               exe=$(readlink "$p/exe" 2>/dev/null) || continue
               case "$exe" in
-            {cases}
+            {{cases}}
+                *) continue ;;
               esac
+              tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qx "SUDO_UID=$uid" || continue
+              kill -9 "${p#/proc/}" 2>/dev/null || true
             done
             exit 0
             """;

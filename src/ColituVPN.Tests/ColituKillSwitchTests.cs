@@ -27,6 +27,8 @@ public class ColituKillSwitchTests
         script.Should().Contain("ip daddr { 203.0.113.7 } accept", "duplicates are removed");
         script.Should().Contain("ip6 daddr { 2001:db8::5 } accept", "link-local addresses are covered by fe80::/10 already");
         script.Should().Contain("192.168.0.0/16").And.Contain("10.0.0.0/8").And.Contain("udp sport 68 udp dport 67 accept");
+        // DHCPv6 only from the privileged client port, never "any host, port 547".
+        script.Should().Contain("udp sport 546 udp dport 547 accept").And.NotContain("    udp dport 547 accept");
     }
 
     [Fact]
@@ -83,10 +85,22 @@ public class ColituKillSwitchTests
     {
         var script = ColituKillSwitch.BuildStopOrphanCoresScript("/opt/colitu-vpn/bin", "/home/u/.local/share/ColituVPN/bin/", "/opt/colitu-vpn/bin/");
         script.Should().Contain("readlink \"$p/exe\"");
-        script.Should().Contain("'/opt/colitu-vpn/bin/'*) kill -9 \"${p#/proc/}\" 2>/dev/null || true ;;");
-        script.Should().Contain("'/home/u/.local/share/ColituVPN/bin/'*) kill -9");
+        script.Should().Contain("'/opt/colitu-vpn/bin/'*) ;;");
+        script.Should().Contain("'/home/u/.local/share/ColituVPN/bin/'*) ;;");
+        script.Should().Contain("*) continue ;;");
         script.Split("/opt/colitu-vpn/bin/").Length.Should().Be(2, "duplicates are dropped");
         script.Should().NotContain("\r");
+    }
+
+    [Fact]
+    public void OrphanCores_OnlyThoseThisUserStartedThroughSudo()
+    {
+        // colitud (systemd) and other users' TUN sessions run the same /opt/colitu-vpn/bin cores.
+        var script = ColituKillSwitch.BuildStopOrphanCoresScript("/opt/colitu-vpn/bin");
+        script.Should().Contain("uid=\"${SUDO_UID:-}\"");
+        script.Should().Contain("case \"$uid\" in ''|*[!0-9]*) exit 0 ;; esac", "no caller uid: nothing is killed");
+        script.Should().Contain("tr '\\0' '\\n' < \"$p/environ\" 2>/dev/null | grep -qx \"SUDO_UID=$uid\" || continue");
+        script.IndexOf("grep -qx", StringComparison.Ordinal).Should().BeLessThan(script.IndexOf("kill -9", StringComparison.Ordinal));
     }
 
     [Fact]
