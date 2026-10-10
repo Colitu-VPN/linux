@@ -14,7 +14,7 @@ system proxy, TUN, routing and DNS. It shares that core layer with the
 | | |
 |---|---|
 | App | `Colitu VPN` (`/opt/colitu-vpn/ColituVPN`, launcher `colitu-vpn`), Avalonia on .NET 10 |
-| Version | `1.4.1` (`src/ColituVPN/ColituVPN.csproj`) |
+| Version | `1.4.2` (`src/ColituVPN/ColituVPN.csproj`) |
 | OS | Debian/Ubuntu/Mint (`.deb`), Fedora/RHEL/openSUSE (`.rpm`), any distribution (`.tar.gz`); x64 and arm64 |
 | Languages | Russian, English, Turkish |
 | License | [GPL-3.0](LICENSE) |
