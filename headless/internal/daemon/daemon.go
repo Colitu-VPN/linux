@@ -74,6 +74,9 @@ type Daemon struct {
 
 	// connMu serialises connect, disconnect, logout and login completion.
 	connMu sync.Mutex
+	// loginMu serialises starting and cancelling a sign-in, so two
+	// login_start calls cannot leave one running that nobody can cancel.
+	loginMu sync.Mutex
 	// tokMu serialises token refreshes (refresh tokens are single-use).
 	tokMu sync.Mutex
 }
@@ -209,7 +212,9 @@ func (d *Daemon) Handle(ctx context.Context, req proto.Request) (any, *proto.Err
 	case proto.CmdLoginStatus:
 		return d.loginStatus()
 	case proto.CmdLoginCancel:
+		d.loginMu.Lock()
 		d.cancelLogin()
+		d.loginMu.Unlock()
 		return struct{}{}, nil
 	case proto.CmdLogout:
 		var a proto.LogoutArgs

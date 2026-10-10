@@ -780,3 +780,30 @@ func TestUnknownCommand(t *testing.T) {
 		t.Errorf("unknown command = %v", perr)
 	}
 }
+
+func TestConcurrentLoginStartsLeaveNoOrphanSignIn(t *testing.T) {
+	h := newHarness(t)
+	h.panel.set(func(p *fakePanel) { p.linkPolls = -1 << 30 }) // pending until told otherwise
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = h.do(proto.CmdLoginStart, nil, nil)
+		}()
+	}
+	wg.Wait()
+	h.mustDo(proto.CmdLoginCancel, nil, nil)
+	// Approving now must not sign the daemon in through a sign-in nobody can see.
+	h.panel.set(func(p *fakePanel) { p.linkPolls = 10 })
+	time.Sleep(200 * time.Millisecond)
+	if st := h.status(); st.LoggedIn {
+		t.Fatal("a cancelled sign-in signed the daemon in")
+	}
+	h.panel.mu.Lock()
+	registered := len(h.panel.registered)
+	h.panel.mu.Unlock()
+	if registered != 0 {
+		t.Fatalf("%d devices registered after the sign-in was cancelled", registered)
+	}
+}

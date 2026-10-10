@@ -101,6 +101,13 @@ func Listen(path, group string) (net.Listener, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
+	// The directory is chmod'ed and handed to the group below: never do that
+	// to a shared one such as /tmp (it would lose its sticky bit).
+	if fi, err := os.Stat(dir); err != nil {
+		return nil, err
+	} else if fi.Mode().Perm()&0o002 != 0 || fi.Mode()&os.ModeSticky != 0 {
+		return nil, fmt.Errorf("%s is writable by others: put the socket in a directory of its own", dir)
+	}
 	gid := lookupGID(group)
 	if gid >= 0 {
 		_ = os.Chown(dir, -1, gid)
@@ -110,7 +117,13 @@ func Listen(path, group string) (net.Listener, error) {
 		c.Close()
 		return nil, fmt.Errorf("another colitud already listens on %s", path)
 	}
-	_ = os.Remove(path)
+	// Only a stale socket is replaced, never a file that happens to sit there.
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode().Type() != os.ModeSocket {
+			return nil, fmt.Errorf("%s exists and is not a socket", path)
+		}
+		_ = os.Remove(path)
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, err

@@ -22,6 +22,8 @@ type linkSession struct {
 }
 
 func (d *Daemon) loginStart(ctx context.Context) (any, *proto.Error) {
+	d.loginMu.Lock()
+	defer d.loginMu.Unlock()
 	if d.loggedIn() {
 		return nil, &proto.Error{Code: proto.CodeAlreadyIn, Message: "already signed in: run `colitu logout` first to use another account"}
 	}
@@ -56,7 +58,7 @@ func (d *Daemon) runLogin(ctx context.Context, ls *linkSession, start api.LinkSt
 	tokens, err := d.cfg.API.WaitLink(ctx, start, d.cfg.Sleep)
 	switch {
 	case err == nil:
-		if err := d.completeLogin(ctx, tokens); err != nil {
+		if err := d.completeLogin(ctx, ls, tokens); err != nil {
 			d.log.Warn("sign-in could not be completed", "err", err)
 			d.setLink(ls, proto.LoginFailed, d.fail(err).Message)
 			return
@@ -76,13 +78,20 @@ func (d *Daemon) runLogin(ctx context.Context, ls *linkSession, start api.LinkSt
 // completeLogin registers this device with the account the user approved
 // and stores the credentials. A failure revokes the tokens again so no
 // half-finished session is left on the account.
-func (d *Daemon) completeLogin(ctx context.Context, tokens api.Tokens) error {
+func (d *Daemon) completeLogin(ctx context.Context, ls *linkSession, tokens api.Tokens) error {
 	d.connMu.Lock()
 	defer d.connMu.Unlock()
 
 	d.mu.Lock()
 	st := d.st
+	current := d.link == ls
 	d.mu.Unlock()
+	// A sign-in that was replaced or cancelled in the meantime, or one that
+	// would overwrite a session already stored, must not sign the daemon in.
+	if !current || ctx.Err() != nil || st.LoggedIn() {
+		revoke(d, tokens.RefreshToken)
+		return errors.New("the sign-in was cancelled")
+	}
 	if st.DeviceKey == "" {
 		key, err := state.NewDeviceKey()
 		if err != nil {
@@ -162,7 +171,9 @@ func (d *Daemon) cancelLogin() {
 }
 
 func (d *Daemon) logout(ctx context.Context, a proto.LogoutArgs) (any, *proto.Error) {
+	d.loginMu.Lock()
 	d.cancelLogin()
+	d.loginMu.Unlock()
 	d.connMu.Lock()
 	defer d.connMu.Unlock()
 	d.stopSession()

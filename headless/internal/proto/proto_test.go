@@ -229,14 +229,48 @@ func TestListenReplacesStaleSocketButNotALiveOne(t *testing.T) {
 	if _, err := Listen(path, ""); err == nil {
 		t.Error("Listen must fail while another daemon answers on the socket")
 	}
-	// Closing a unix listener removes the file in Go; recreate a stale one.
+	// A crashed daemon leaves its socket file behind: keep it on close.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	ln.Close()
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatal(err)
+	if fi, err := os.Lstat(path); err != nil || fi.Mode().Type() != os.ModeSocket {
+		t.Fatalf("expected a stale socket at %s (%v)", path, err)
 	}
 	ln2, err := Listen(path, "")
 	if err != nil {
 		t.Fatalf("a stale socket file must be replaced: %v", err)
 	}
 	ln2.Close()
+}
+
+func TestListenNeverDeletesAFileThatIsNotASocket(t *testing.T) {
+	path := shortSocket(t)
+	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ln, err := Listen(path, ""); err == nil {
+		ln.Close()
+		t.Fatal("Listen must refuse a path that holds a regular file")
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "keep" {
+		t.Fatalf("the file was touched: %q, %v", b, err)
+	}
+}
+
+func TestListenRefusesASharedDirectory(t *testing.T) {
+	dir, err := os.MkdirTemp("", "cl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.Chmod(dir, os.ModeSticky|0o777); err != nil {
+		t.Fatal(err)
+	}
+	if ln, err := Listen(filepath.Join(dir, "d.sock"), ""); err == nil {
+		ln.Close()
+		t.Fatal("Listen must refuse a world-writable directory such as /tmp")
+	}
+	fi, _ := os.Stat(dir)
+	if fi.Mode().Perm() != 0o777 || fi.Mode()&os.ModeSticky == 0 {
+		t.Errorf("the shared directory's mode changed to %v", fi.Mode())
+	}
 }

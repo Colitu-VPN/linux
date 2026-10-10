@@ -40,8 +40,22 @@ func New(base string) *Client {
 	}
 	return &Client{
 		Base: strings.TrimRight(base, "/"),
-		HTTP: &http.Client{Timeout: 20 * time.Second},
+		HTTP: &http.Client{Timeout: 20 * time.Second, CheckRedirect: sameOriginRedirect},
 	}
+}
+
+// sameOriginRedirect follows a redirect only to the same scheme and host:
+// requests carry the access token and, on refresh and logout, the refresh
+// token, which must never be replayed to another origin or over plain HTTP.
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many redirects")
+	}
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme || !strings.EqualFold(req.URL.Host, first.Host) {
+		return fmt.Errorf("refusing redirect from %s to %s", first.Host, req.URL.Redacted())
+	}
+	return nil
 }
 
 // LinkStatus is the outcome of one poll of a pending sign-in.

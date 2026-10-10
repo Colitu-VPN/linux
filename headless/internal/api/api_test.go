@@ -273,3 +273,22 @@ func TestNewReadsAPIBaseFromEnvironment(t *testing.T) {
 		t.Errorf("Base = %q, want the default", got)
 	}
 }
+
+func TestRedirectToAnotherOriginIsNotFollowed(t *testing.T) {
+	var leaked atomic.Bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked.Store(true)
+	}))
+	t.Cleanup(other.Close)
+	m := newPanel(t)
+	m.mux.HandleFunc("POST /api/v1/auth/refresh", func(w http.ResponseWriter, r *http.Request) {
+		// 307 would resend the body, refresh token included.
+		http.Redirect(w, r, other.URL+"/steal", http.StatusTemporaryRedirect)
+	})
+	if _, err := m.client().Refresh(context.Background(), "secret", "dev-1"); err == nil {
+		t.Fatal("Refresh must fail on a cross-origin redirect")
+	}
+	if leaked.Load() {
+		t.Fatal("the refresh token was sent to another origin")
+	}
+}
